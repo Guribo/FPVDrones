@@ -1,0 +1,52 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!21 &2100000
+Material:
+  serializedVersion: 6
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_Name: CameraFishEye 1
+  m_Shader: {fileID: 4800000, guid: 94edf0746657ff440bb8ce5d23dcdc14, type: 3}
+  m_ShaderKeywords: _BICUBICSAMPLING_ON _FISHEYEEFFECT_ON _FLIPEFFECT_ON _TOGGLESWITCH0_ON
+  m_LightmapFlags: 0
+  m_EnableInstancingVariants: 1
+  m_DoubleSidedGI: 0
+  m_CustomRenderQueue: -1
+  stringTagMap: {}
+  disabledShaderPasses: []
+  m_SavedProperties:
+    serializedVersion: 3
+    m_TexEnvs:
+    - _MainTex:
+        m_Texture: {fileID: 2800000, guid: 19555d7d9d114c7f1100f5ab44295342, type: 3}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _MainTex1:
+        m_Texture: {fileID: 0}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _TextureSample0:
+        m_Texture: {fileID: 0}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _texcoord:
+        m_Texture: {fileID: 0}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    m_Floats:
+    - _BicubicSampling: 1
+    - _Distance: 1
+    - _FOV_Degree: 180
+    - _FishEyeEffect: 1
+    - _FlipEffect: 1
+    - _Float0: 3.45
+    - _FocalLength: 0.5
+    - _HorizontalFOV: 179
+    - _ScaleCorrection: 13039
+    - _ToggleSwitch0: 1
+    - __dirty: 0
+    m_Colors:
+    - _Center: {r: 0.5, g: 0.5, b: 0, a: 0}
+    - _Center1: {r: 0.5, g: 0.5, b: 0, a: 0}
