@@ -61,7 +61,7 @@ MonoBehaviour:
       Data: 4|System.RuntimeType, mscorlib
     - Name: 
       Entry: 1
-      Data: Guribo.FPVDrone.Scripts.DroneInput, Assembly-CSharp
+      Data: Guribo.FPVDrones.Scripts.DroneInput, Assembly-CSharp
     - Name: 
       Entry: 8
       Data: 

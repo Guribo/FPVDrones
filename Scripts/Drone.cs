@@ -1,15 +1,16 @@
-﻿using System;
+﻿using Guribo.FPVDrone.Scripts;
 using Guribo.UdonBetterAudio.Scripts;
 using UdonSharp;
 using UnityEngine;
+using VRC.SDK3.Components;
 using VRC.SDKBase;
 
-namespace Guribo.FPVDrone.Scripts
+namespace Guribo.FPVDrones.Scripts
 {
     public class Drone : UdonSharpBehaviour
     {
         [HideInInspector] public int noPilot = -1;
-        [UdonSynced] public int pilotId = -1;
+        public int pilotId = -1;
         [UdonSynced(UdonSyncMode.Linear)] public float rpm;
 
         private float _throttle;
@@ -24,9 +25,10 @@ namespace Guribo.FPVDrone.Scripts
         [SerializeField] private float maxEngineThrust = 3.5f;
 
         [SerializeField] private Rigidbody rigidbody;
-        [SerializeField] private Transform spawn;
         [SerializeField] private Camera fpvCamera;
         [SerializeField] private Camera viewOverrideCamera;
+
+        public Transform screen;
 
         [SerializeField] private Transform motorFrontLeft;
         [SerializeField] private Transform motorFrontRight;
@@ -44,6 +46,15 @@ namespace Guribo.FPVDrone.Scripts
         private AudioSource _motorProxy;
 
         private DroneInput droneInput;
+        public DroneUserController droneUserController;
+        public VRCPickup vrcPickup;
+
+        private bool _startPilotingPressed;
+        private bool _stopPilotingPressed;
+        private bool _toggleFpvPressed;
+        private float _lastLocallyControlled;
+
+        private bool _isPiloting;
 
         public void Start()
         {
@@ -63,36 +74,16 @@ namespace Guribo.FPVDrone.Scripts
         public void Update()
         {
             UpdateInput();
+            ControlPiloting();
+            PlayMotorSound(true);
         }
 
 
         public void UpdateInput()
         {
-            if (pilotId == noPilot)
-            {
-                fpvCamera.gameObject.SetActive(false);
-                viewOverrideCamera.gameObject.SetActive(false);
-                rpm = 0f;
-                PlayMotorSound(false);
-                return;
-            }
-            else
-            {
-                PlayMotorSound(true);
-            }
-
-
-            _isLocallyControlled = false;
             var localPlayer = Networking.LocalPlayer;
             if (localPlayer == null)
             {
-                return;
-            }
-
-            if (pilotId != localPlayer.playerId)
-            {
-                fpvCamera.gameObject.SetActive(true);
-                viewOverrideCamera.gameObject.SetActive(false);
                 return;
             }
 
@@ -106,6 +97,16 @@ namespace Guribo.FPVDrone.Scripts
 
                 return;
             }
+
+            if (pilotId != localPlayer.playerId)
+            {
+                fpvCamera.gameObject.SetActive(true);
+                viewOverrideCamera.gameObject.SetActive(false);
+                return;
+            }
+
+            _isLocallyControlled = true;
+
 
             var vrcInputMethod = (int) InputManager.GetLastUsedInputMethod();
 
@@ -121,37 +122,46 @@ namespace Guribo.FPVDrone.Scripts
             }
 
             if (Input.GetKeyDown(droneInput.resetFallback) ||
-                (!string.IsNullOrEmpty(droneInput.reset) && Input.GetButtonDown(droneInput.reset)))
+                (!string.IsNullOrEmpty(droneInput.reset)
+                 && Input.GetButtonDown(droneInput.reset)))
             {
-                transform.SetPositionAndRotation(spawn.position, spawn.rotation);
+                SpawnDroneForPlayer(this, localPlayer);
                 rigidbody.velocity = Vector3.zero;
                 rigidbody.angularVelocity = Vector3.zero;
                 return;
             }
 
-            if (Input.GetKeyDown(droneInput.toggleFpvFallback) ||
-                (!string.IsNullOrEmpty(droneInput.toggleFpv) && Input.GetButtonDown(droneInput.toggleFpv))
-                || !(fpvCamera.gameObject.activeSelf || viewOverrideCamera.gameObject.activeSelf))
+
+            _stopPilotingPressed = Input.GetKeyDown(droneInput.exitFallback) ||
+                                   (!string.IsNullOrEmpty(droneInput.exit)
+                                    && Input.GetButtonDown(droneInput.exit));
+            _startPilotingPressed = Input.GetKeyDown(droneInput.enterFallback) ||
+                                    (!string.IsNullOrEmpty(droneInput.enter)
+                                     && Input.GetButtonDown(droneInput.enter));
+
+            if (_isPiloting)
             {
-                var fpvEnabled = fpvCamera.gameObject.activeSelf;
-                fpvCamera.gameObject.SetActive(!fpvEnabled);
-                fpvCamera.enabled = !fpvEnabled;
-                viewOverrideCamera.gameObject.SetActive(fpvEnabled);
-                viewOverrideCamera.enabled = fpvEnabled;
+                _toggleFpvPressed = Input.GetKeyDown(droneInput.toggleFpvFallback) ||
+                                    (!string.IsNullOrEmpty(droneInput.toggleFpv)
+                                     && Input.GetButtonDown(droneInput.toggleFpv));
+
+
+                rpm = Mathf.Clamp(_throttle + (0.5f * (Mathf.Abs(_pitch) + Mathf.Abs(_roll) + Mathf.Abs(_yaw))), minRpm,
+                    1f);
             }
-
-            _isLocallyControlled = true;
-
-            rpm = Mathf.Clamp01(_throttle + (0.5f * (Mathf.Abs(_pitch) + Mathf.Abs(_roll) + Mathf.Abs(_yaw))));
+            else
+            {
+                _toggleFpvPressed = false;
+                rpm = 0f;
+            }
         }
 
         private void PlayMotorSound(bool play)
         {
             if (play)
             {
-                var volume = Remap(0, 1, minRpm, 1f, rpm);
-                _motorProxy.volume = volume;
-                _motorProxy.pitch = volume;
+                _motorProxy.volume = rpm;
+                _motorProxy.pitch = rpm;
                 if (!motorSound.IsPlaying())
                 {
                     motorSound.Play(true);
@@ -168,7 +178,17 @@ namespace Guribo.FPVDrone.Scripts
 
         public void FixedUpdate()
         {
-            if (!_isLocallyControlled || !droneInput)
+            if (vrcPickup.IsHeld)
+            {
+                var owner = Networking.GetOwner(gameObject);
+                if (owner != null)
+                {
+                    owner.PlayHapticEventInHand(vrcPickup.currentHand, Time.fixedDeltaTime, rpm, rpm * 10f);
+                }
+            }
+
+
+            if (!_isLocallyControlled || !droneInput || !_isPiloting)
             {
                 return;
             }
@@ -203,5 +223,87 @@ namespace Guribo.FPVDrone.Scripts
 
         private float InverseLerp(float a, float b, float value) => (value - a) / (b - a);
         private float Lerp(float a, float b, float t) => (1f - t) * a + t * b;
+
+
+        private void ControlPiloting()
+        {
+            var localPlayer = Networking.LocalPlayer;
+            if (localPlayer == null) return;
+            if (pilotId == localPlayer.playerId)
+            {
+                if (_startPilotingPressed)
+                {
+                    localPlayer.Immobilize(true);
+
+                    SpawnScreenForPlayer(localPlayer);
+                    _isPiloting = true;
+                }
+
+                if (_toggleFpvPressed)
+                {
+                    var fpvEnabled = fpvCamera.gameObject.activeSelf;
+                    fpvCamera.gameObject.SetActive(!fpvEnabled);
+                    fpvCamera.enabled = !fpvEnabled;
+                    viewOverrideCamera.gameObject.SetActive(fpvEnabled);
+                    viewOverrideCamera.enabled = fpvEnabled;
+                }
+
+                if (_stopPilotingPressed)
+                {
+                    localPlayer.Immobilize(false);
+                    _isPiloting = false;
+                    fpvCamera.gameObject.SetActive(true);
+                    fpvCamera.enabled = true;
+                    viewOverrideCamera.gameObject.SetActive(false);
+                    viewOverrideCamera.enabled = false;
+                }
+
+                _lastLocallyControlled = Time.time;
+            }
+
+
+            if (Time.time - _lastLocallyControlled > 0.5f)
+            {
+                if (Networking.IsOwner(gameObject))
+                {
+                    localPlayer.Immobilize(false);
+                    _isPiloting = false;
+                }
+
+                fpvCamera.gameObject.SetActive(true);
+                fpvCamera.enabled = true;
+                viewOverrideCamera.gameObject.SetActive(false);
+                viewOverrideCamera.enabled = false;
+            }
+        }
+
+        public override void OnSpawn()
+        {
+            var vrcPlayerApi = Networking.LocalPlayer;
+            if (vrcPlayerApi == null) return;
+            vrcPlayerApi.Immobilize(false);
+            _isPiloting = false;
+
+            fpvCamera.gameObject.SetActive(true);
+            fpvCamera.enabled = true;
+            viewOverrideCamera.gameObject.SetActive(false);
+            viewOverrideCamera.enabled = false;
+        }
+
+        private void SpawnDroneForPlayer(Drone drone, VRCPlayerApi player)
+        {
+            var playerRotation = player.GetRotation();
+            drone.gameObject.transform.SetPositionAndRotation(
+                player.GetPosition() + playerRotation * Vector3.forward, playerRotation);
+            SpawnScreenForPlayer(player);
+        }
+
+        private void SpawnScreenForPlayer(VRCPlayerApi player)
+        {
+            if (!screen) return;
+            var playerRotation = player.GetRotation();
+            screen.SetPositionAndRotation(
+                player.GetPosition() + playerRotation * Vector3.forward, playerRotation);
+        }
     }
 }

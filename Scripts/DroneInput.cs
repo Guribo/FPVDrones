@@ -2,15 +2,16 @@
 using UdonSharp;
 using UnityEngine;
 
-namespace Guribo.FPVDrone.Scripts
+namespace Guribo.FPVDrones.Scripts
 {
     public class DroneInput : UdonSharpBehaviour
     {
         [NonSerialized] public bool InUse;
-
-
-        public string reset = "Oculus_CrossPlatform_Button4";
-        public string toggleFpv = "Oculus_CrossPlatform_Button2";
+        
+        public string enter = "Oculus_CrossPlatform_Button4";
+        public string exit = "Oculus_CrossPlatform_Button2";
+        public string reset = "Oculus_CrossPlatform_PrimaryThumbstick";
+        public string toggleFpv = "Oculus_CrossPlatform_SecondaryThumbstick";
 
         public string throttleMin = "Vertical";
         public string throttleMax = "Vertical";
@@ -21,6 +22,8 @@ namespace Guribo.FPVDrone.Scripts
         public string yawMin = "Horizontal";
         public string yawMax = "Horizontal";
 
+        public KeyCode enterFallback = KeyCode.Return;
+        public KeyCode exitFallback = KeyCode.Backspace;
         public KeyCode resetFallback = KeyCode.R;
         public KeyCode toggleFpvFallback = KeyCode.C;
         public KeyCode throttleUpFallback = KeyCode.LeftShift;
