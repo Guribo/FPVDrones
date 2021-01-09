@@ -1,10 +1,8 @@
-﻿using System;
-using Guribo.FPVDrones.Scripts;
-using UdonSharp;
+﻿using UdonSharp;
 using UnityEngine;
 using UnityEngine.UI;
 
-namespace Guribo.FPVDrone.Scripts
+namespace Guribo.FPVDrones.Scripts
 {
     public class UiDroneAxisInput : UdonSharpBehaviour
     {
@@ -85,6 +83,8 @@ namespace Guribo.FPVDrone.Scripts
 
         private float[] _inputAxisValues;
         private float[] _absPreviousInputAxisValues;
+
+        public DroneUserController droneUserController;
 
 #if UNITY_EDITOR
         private readonly string[] _inputAxisNames = new[]
@@ -212,7 +212,10 @@ namespace Guribo.FPVDrone.Scripts
 
             if (customDroneInput)
             {
-                customDroneInput.InUse = true;
+                if (droneUserController)
+                {
+                    droneUserController.SetCustomInputChanged();
+                }
                 customDroneInput.SetProgramVariable(customDroneInputExpo, expoSlider.value);
             }
         }
@@ -238,7 +241,10 @@ namespace Guribo.FPVDrone.Scripts
 
             if (customDroneInput)
             {
-                customDroneInput.InUse = true;
+                if (droneUserController)
+                {
+                    droneUserController.SetCustomInputChanged();
+                }
                 customDroneInput.SetProgramVariable(customDroneInputRates, ratesSlider.value);
             }
         }
@@ -318,7 +324,10 @@ namespace Guribo.FPVDrone.Scripts
 
                         if (calibrated && customDroneInput)
                         {
-                            customDroneInput.InUse = true;
+                            if (droneUserController)
+                            {
+                                droneUserController.SetCustomInputChanged();
+                            }
                             customDroneInput.SetProgramVariable(customDroneInputInvertedMax, _maxInverted);
                             customDroneInput.SetProgramVariable(customDroneInputMaxAxisName, _inputAxisNames[i]);
                             var calibration =
@@ -358,7 +367,10 @@ namespace Guribo.FPVDrone.Scripts
 
                         if (calibrated && customDroneInput)
                         {
-                            customDroneInput.InUse = true;
+                            if (droneUserController)
+                            {
+                                droneUserController.SetCustomInputChanged();
+                            }
                             customDroneInput.SetProgramVariable(customDroneInputInvertedMin, _minInverted);
                             customDroneInput.SetProgramVariable(customDroneInputMinAxisName, _inputAxisNames[i]);
                             var calibration =

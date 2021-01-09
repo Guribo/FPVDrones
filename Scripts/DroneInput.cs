@@ -6,8 +6,6 @@ namespace Guribo.FPVDrones.Scripts
 {
     public class DroneInput : UdonSharpBehaviour
     {
-        [NonSerialized] public bool InUse;
-        
         public string enter = "Oculus_CrossPlatform_Button4";
         public string exit = "Oculus_CrossPlatform_Button2";
         public string reset = "Oculus_CrossPlatform_PrimaryThumbstick";
@@ -68,110 +66,5 @@ namespace Guribo.FPVDrones.Scripts
             gameObject.SetActive(false);
         }
 
-        /// <summary>
-        /// input should be between -1 to 1
-        /// </summary>
-        /// <param name="input"></param>
-        /// <param name="factor"></param>
-        /// <returns></returns>
-        private float ApplyExpo(float input, float factor)
-        {
-            return ((1f - factor) * (input * input * input)) + (factor * input);
-        }
-
-        public float GetYaw()
-        {
-            var raw = GetInputAxis(yawMin, yawMax,
-                yawLeftFallback,
-                yawRightFallback,
-                yawMinInverted,
-                yawMaxInverted,
-                yawInputCalibration);
-            raw = ApplyExpo(raw, yawExpo);
-            raw *= yawRate;
-            return raw;
-        }
-
-        public float GetPitch()
-        {
-            var raw = GetInputAxis(pitchMin, pitchMax,
-                pitchDownFallback,
-                pitchUpFallback,
-                pitchMinInverted,
-                pitchMaxInverted,
-                pitchInputCalibration);
-            raw = ApplyExpo(raw, pitchExpo);
-            raw *= pitchRate;
-            return raw;
-        }
-
-        public float GetRoll()
-        {
-            var raw = GetInputAxis(rollMin, rollMax,
-                rollLeftFallback,
-                rollRightFallback,
-                rollMinInverted,
-                rollMaxInverted,
-                rollInputCalibration);
-            raw = ApplyExpo(raw, rollExpo);
-            raw *= rollRate;
-            return raw;
-        }
-
-        public float GetThrottle()
-        {
-            var raw = GetInputAxis(throttleMin, throttleMax,
-                throttleDownFallback,
-                throttleUpFallback,
-                throttleMinInverted,
-                throttleMaxInverted,
-                throttleInputCalibration);
-            raw = ApplyExpo(raw, throttleExpo);
-            raw *= throttleRate;
-            return raw;
-        }
-
-        private float GetAxisInput(string minAxisName,
-            string maxAxisName,
-            bool minInverted,
-            bool maxInverted,
-            Vector2 axisCalibration)
-        {
-            var axisValue = 0f;
-            if (!string.IsNullOrWhiteSpace(minAxisName))
-            {
-                var min = (minInverted ? -1f : 1f) * Input.GetAxisRaw(minAxisName);
-                var invertedInputIsNegative = min < 0f && minInverted;
-                var normalInputIsPositive = min > 0f && !minInverted;
-
-                if (!(invertedInputIsNegative || normalInputIsPositive))
-                {
-                    axisValue += (min / (axisCalibration.x > 0f ? axisCalibration.x : 1f));
-                }
-            }
-
-            if (!string.IsNullOrWhiteSpace(maxAxisName))
-            {
-                var max = (maxInverted ? -1f : 1f) * Input.GetAxisRaw(maxAxisName);
-                var invertedInputIsPositive = max > 0f && maxInverted;
-                var normalInputIsNegative = max < 0f && !maxInverted;
-                if (!(invertedInputIsPositive || normalInputIsNegative))
-                {
-                    axisValue += (max / (axisCalibration.y > 0f ? axisCalibration.y : 1f));
-                }
-            }
-
-            return axisValue;
-        }
-
-        private float GetInputAxis(string minAxisName, string maxAxisName, KeyCode fallbackMin, KeyCode fallbackMax,
-            bool minInverted, bool maxInverted, Vector2 axisCalibration)
-        {
-            var min = Input.GetKey(fallbackMin) ? -1f : 0f;
-            var max = Input.GetKey(fallbackMax) ? 1f : 0f;
-            var combinedInput = min + max + GetAxisInput((string) minAxisName, (string) maxAxisName, minInverted,
-                maxInverted, axisCalibration);
-            return Mathf.Clamp(combinedInput, -1, 1);
-        }
     }
 }

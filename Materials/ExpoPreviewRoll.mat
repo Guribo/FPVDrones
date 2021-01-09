@@ -72,7 +72,7 @@ Material:
     - _GlossyReflections: 1
     - _InputWidth: 0.025
     - _MaxInput: 1
-    - _MaxRate: 1
+    - _MaxRate: 0.2778441
     - _Metallic: 0
     - _MinInput: -1
     - _Mode: 0
