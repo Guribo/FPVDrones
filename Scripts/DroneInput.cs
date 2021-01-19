@@ -59,12 +59,5 @@ namespace Guribo.FPVDrones.Scripts
         public Vector2 pitchInputCalibration = Vector2.one;
         public Vector2 rollInputCalibration = Vector2.one;
         public Vector2 throttleInputCalibration = Vector2.one;
-
-        private void Start()
-        {
-            Debug.LogError("Data behaviours should not be enabled in the scene");
-            gameObject.SetActive(false);
-        }
-
     }
 }

@@ -1,4 +1,5 @@
-﻿using Guribo.UdonBetterAudio.Scripts;
+﻿using System;
+using Guribo.UdonBetterAudio.Scripts;
 using UdonSharp;
 using UnityEngine;
 using UnityEngine.UI;
@@ -16,17 +17,20 @@ namespace Guribo.FPVDrones.Scripts
 
         [HideInInspector] public int noPilot = -1;
 
-        private const int DroneStateOff = 0;
-        private const int DroneStateNotBooted = 1;
-        private const int DroneStateBooting = 2;
-        private const int DroneStateReady = 3;
-        private const int DroneStatePiloted = 4;
-        private const int DroneStateCrashed = 5;
-        private const int DroneStateGrabbed = 6;
+        private const int DroneStateTurningOff = 0;
+        private const int DroneStateOff = 1;
+        private const int DroneStateNotBooted = 2;
+        private const int DroneStateBooting = 3;
+        private const int DroneStateReady = 4;
+        private const int DroneStatePiloted = 5;
+        private const int DroneStateCrashed = 6;
 
+        private float _motorRpm;
         private bool _initialized;
-        private int _currentState;
+        private bool _grabbed;
         private int _previousState;
+        private int _currentState;
+        private int _pendingState;
         private bool _isOwner;
         private VRCPlayerApi _owner;
         private bool _isPilot;
@@ -34,7 +38,7 @@ namespace Guribo.FPVDrones.Scripts
 
         private bool IsInState(int targetState)
         {
-            return syncedDroneState == targetState;
+            return _currentState == targetState;
         }
 
         private bool WasInState(int targetState)
@@ -42,20 +46,99 @@ namespace Guribo.FPVDrones.Scripts
             return _previousState == targetState;
         }
 
+        private int GetNextState(int currentState, int targetState)
+        {
+            if (targetState == DroneStateTurningOff)
+            {
+                return DroneStateTurningOff;
+            }
+
+            switch (currentState)
+            {
+                case DroneStateTurningOff:
+                    if (targetState > DroneStateTurningOff)
+                    {
+                        return DroneStateOff;
+                    }
+
+                    return DroneStateTurningOff;
+                case DroneStateOff:
+                    if (targetState > DroneStateOff)
+                    {
+                        return DroneStateNotBooted;
+                    }
+
+                    return DroneStateOff;
+                case DroneStateNotBooted:
+                    if (targetState > DroneStateNotBooted)
+                    {
+                        return DroneStateBooting;
+                    }
+                    else if (targetState < DroneStateNotBooted)
+                    {
+                        return DroneStateOff;
+                    }
+
+                    return DroneStateNotBooted;
+                case DroneStateBooting:
+                    if (targetState > DroneStateBooting)
+                    {
+                        return DroneStateReady;
+                    }
+                    else if (targetState < DroneStateBooting)
+                    {
+                        return DroneStateNotBooted;
+                    }
+
+                    return DroneStateBooting;
+                case DroneStateReady:
+                    if (targetState > DroneStateReady)
+                    {
+                        return DroneStatePiloted;
+                    }
+                    else if (targetState < DroneStateReady)
+                    {
+                        return DroneStateNotBooted;
+                    }
+
+                    return DroneStateReady;
+                case DroneStatePiloted:
+                    if (targetState > DroneStatePiloted)
+                    {
+                        return DroneStateCrashed;
+                    }
+                    else if (targetState < DroneStatePiloted)
+                    {
+                        return DroneStateOff;
+                    }
+
+                    return DroneStatePiloted;
+                case DroneStateCrashed:
+                    if (targetState < DroneStateCrashed)
+                    {
+                        return DroneStatePiloted;
+                    }
+
+                    return DroneStateCrashed;
+                default:
+                    return DroneStateOff;
+            }
+        }
+
         #endregion
 
         #region Networking
 
         /// <summary>
-        /// DroneStateOff = 0;
-        /// DroneStateNotBooted = 1;
-        /// DroneStateBooting = 2;
-        /// DroneStateReady = 3;
-        /// DroneStatePiloted = 4;
-        /// DroneStateCrashed = 5;
-        /// DroneStateGrabbed = 6;
+        /// DroneStateTurningOff = 0;
+        /// DroneStateOff = 1;
+        /// DroneStateNotBooted = 2;
+        /// DroneStateBooting = 3;
+        /// DroneStateReady = 4;
+        /// DroneStatePiloted = 5;
+        /// DroneStateCrashed = 6;
         /// </summary>
-        [UdonSynced] public int syncedDroneState = DroneStateOff;
+        [UdonSynced] public int syncedTargetDroneState = DroneStateOff;
 
         [UdonSynced] public int syncedPilotId = -1;
 
@@ -63,26 +146,18 @@ namespace Guribo.FPVDrones.Scripts
 
         public override void OnPreSerialization()
         {
-            _isOwner = Networking.IsOwner(gameObject);
-            _isPilot = syncedPilotId == _localPlayerId;
-
-            if (_isOwner)
-            {
-                _owner = _localPlayer;
-                syncedDroneState = _currentState;
-            }
+            TryRefreshOwnerState();
         }
 
         public override void OnDeserialization()
         {
-            _isOwner = Networking.IsOwner(gameObject);
-            _isPilot = syncedPilotId == _localPlayerId;
+            TryRefreshRemoteState();
+        }
 
-            if (!_isOwner)
-            {
-                _owner = Networking.GetOwner(gameObject);
-                UpdateLocalState(syncedDroneState);
-            }
+
+        public override void OnOwnershipTransferred()
+        {
+            OnDeserialization();
         }
 
         #endregion
@@ -258,71 +333,560 @@ namespace Guribo.FPVDrones.Scripts
 
         public void Start()
         {
-            if (!CacheLocalPlayer()
-                || !CacheLocalMotorPositions()
-                || !InitPhysics()
-                || !InitCameras()
-                || !InitAudio())
+            if (!(CacheLocalPlayer()
+                  && CacheLocalMotorPositions()
+                  && InitPhysics()
+                  && InitCameras()
+                  && InitAudio()))
             {
+                Debug.LogError($"Drone {name} initialization failed");
                 return;
             }
 
-            _isOwner = Networking.IsOwner(gameObject);
-            _isPilot = syncedPilotId == _localPlayerId;
-
+            UpdateSinglePlayerState();
             _initialized = true;
-            Debug.Log($"Drone {name} initialized successfully");
+
+            Debug.Log($"Drone {name} initialized successfully", this);
         }
 
         public void FixedUpdate()
         {
-            if (!_initialized) return;
-
-            if (_isOwner && IsInState(DroneStateGrabbed))
+            if (!_initialized)
             {
-                _localPlayer.PlayHapticEventInHand(vrcPickup.currentHand,
-                    Time.fixedDeltaTime,
-                    syncedMotorRpm * 10f,
-                    syncedMotorRpm * 10f);
+                return;
             }
 
-            if (_isOwner && _isPilot && IsInState(DroneStatePiloted))
-            {
-                _yaw = GetYaw();
-                _pitch = GetPitch();
-                _roll = GetRoll();
-                _throttle = GetThrottle();
-
-                var frontLeft = (Mathf.Clamp01(_pitch + _roll + _throttle));
-                var frontRight = (Mathf.Clamp01(_pitch - _roll + _throttle));
-                var backLeft = (Mathf.Clamp01(_roll - _pitch + _throttle));
-                var backRight = (Mathf.Clamp01(_throttle - _pitch - _roll));
-                var forceSum = (frontLeft + frontRight + backLeft + backRight);
-
-                var transformUp = transform.up;
-                if (forceSum > 0.001f)
-                {
-                    var localForcePosition = (frontLeft / forceSum * _localMotorPositionFl)
-                                             + (frontRight / forceSum * _localMotorPositionFr)
-                                             + (backLeft / forceSum * _localMotorPositionBL)
-                                             + (backRight / forceSum * _localMotorPositionBR);
-                    var force = forceSum * maxEngineThrust * transformUp;
-                    var position = transform.TransformPoint(localForcePosition);
-                    droneRigidbody.AddForceAtPosition(force, position);
-                }
-
-                droneRigidbody.AddTorque(transformUp * _yaw);
-            }
+            PilotControlDrone();
         }
-
 
         public void Update()
         {
-            UpdateInput();
-            PlayMotorSound(true);
+            if (!_initialized)
+            {
+                return;
+            }
+
+            var time = Time.time;
+            var deltaTime = Time.deltaTime;
+
+            UpdateSinglePlayerState();
+            UpdateGrabState();
+            UpdateGrabbingForceFeedback(deltaTime);
+            UpdateDrone(time);
+            Debug.Log($"Pending state {_pendingState}");
+            UpdateLocalState(GetNextState(_currentState, _pendingState));
+
+            if (debugText)
+            {
+                var debugTextText = GetDebugText();
+                debugText.text = debugTextText;
+                Debug.Log(debugTextText);
+            }
         }
 
         #endregion
+
+        private void UpdateGrabbingForceFeedback(float deltaTime)
+        {
+            if (IsOwnerGrabbing())
+            {
+                _localPlayer.PlayHapticEventInHand(vrcPickup.currentHand,
+                    deltaTime,
+                    _motorRpm,
+                    _motorRpm * 10f);
+            }
+        }
+
+        private void PilotControlDrone()
+        {
+            if (!(_isOwner
+                  && _isPilot
+                  && IsInState(DroneStatePiloted)))
+            {
+                return;
+            }
+
+            _yaw = GetYaw();
+            _pitch = GetPitch();
+            _roll = GetRoll();
+            _throttle = GetThrottle();
+
+            _motorRpm = _throttle;
+
+            var frontLeft = (Mathf.Clamp01(_pitch + _roll + _throttle));
+            var frontRight = (Mathf.Clamp01(_pitch - _roll + _throttle));
+            var backLeft = (Mathf.Clamp01(_roll - _pitch + _throttle));
+            var backRight = (Mathf.Clamp01(_throttle - _pitch - _roll));
+            var forceSum = (frontLeft + frontRight + backLeft + backRight);
+
+            var transformUp = transform.up;
+            if (forceSum > 0.001f)
+            {
+                var localForcePosition = (frontLeft / forceSum * _localMotorPositionFl)
+                                         + (frontRight / forceSum * _localMotorPositionFr)
+                                         + (backLeft / forceSum * _localMotorPositionBL)
+                                         + (backRight / forceSum * _localMotorPositionBR);
+                var force = forceSum * maxEngineThrust * transformUp;
+                var position = transform.TransformPoint(localForcePosition);
+                droneRigidbody.AddForceAtPosition(force, position);
+            }
+
+            droneRigidbody.AddTorque(transformUp * _yaw);
+        }
+
+        private bool IsOwnerGrabbing()
+        {
+            Assert(vrcPickup, "vrcPickup is valid");
+            return _isOwner
+                   && _grabbed
+                   && vrcPickup.currentHand != VRC_Pickup.PickupHand.None;
+        }
+
+        private void UpdateSinglePlayerState()
+        {
+            if (VRCPlayerApi.GetPlayerCount() == 1)
+            {
+                // update manually because the network sync events are not firing
+                var manualPlayerUpdatePerformed = TryRefreshOwnerState() || TryRefreshRemoteState();
+                Debug.Assert(manualPlayerUpdatePerformed, "Manual update performed");
+            }
+        }
+
+        private void UpdateDrone(float time)
+        {
+            switch (_currentState)
+            {
+                case DroneStateTurningOff:
+                    UpdateDroneTurningOff();
+                    break;
+                case DroneStateOff:
+                    UpdateDroneOff(time);
+                    break;
+                case DroneStateNotBooted:
+                    UpdateDroneNotBooted(time);
+                    break;
+                case DroneStateBooting:
+                    UpdateDroneBooting(time);
+                    break;
+                case DroneStateReady:
+                    UpdateDroneReady(time);
+                    break;
+                case DroneStatePiloted:
+                    UpdateDronePiloted(time);
+                    break;
+                case DroneStateCrashed:
+                    UpdateDroneCrashed(time);
+                    break;
+                default:
+                {
+                    Debug.LogError("Unknown drone state");
+                }
+                    break;
+            }
+        }
+
+        private void UpdateDroneCrashed(float time)
+        {
+            droneRigidbody.angularDrag = angularDragNotActive;
+
+            if (_isOwner)
+            {
+                if (_isPilot)
+                {
+                    // owner and pilot
+                    if (!UpdateOwnerPilotRespawnAndOffAndFpv())
+                    {
+                        return;
+                    }
+                }
+                else
+                {
+                    // owner and not pilot
+                }
+            }
+            else
+            {
+                if (_isPilot)
+                {
+                    // pilot but not owner
+                    if (!UpdateNonOwnerPilotRespawnAndOffAndFpv())
+                    {
+                        return;
+                    }
+                }
+                else
+                {
+                    // not owner and not pilot
+                }
+            }
+
+            _motorRpm = 0;
+            _motorSoundProxy.volume = _motorRpm;
+            _motorSoundProxy.pitch = _motorRpm;
+        }
+
+        private void UpdateDronePiloted(float time)
+        {
+            if (_isOwner)
+            {
+                if (_isPilot)
+                {
+                    // owner and pilot
+                    if (!UpdateOwnerPilotRespawnAndOffAndFpv())
+                    {
+                        return;
+                    }
+                }
+                else
+                {
+                    // owner and not pilot
+                }
+            }
+            else
+            {
+                if (_isPilot)
+                {
+                    // pilot but not owner
+                    if (!UpdateNonOwnerPilotRespawnAndOffAndFpv())
+                    {
+                        return;
+                    }
+                }
+                else
+                {
+                    // not owner and not pilot
+                }
+            }
+
+            _motorSoundProxy.volume = _motorRpm;
+            _motorSoundProxy.pitch = _motorRpm;
+        }
+
+        private void UpdateDroneReady(float time)
+        {
+            _motorRpm = minRpm;
+            _motorSoundProxy.volume = _motorRpm;
+            _motorSoundProxy.pitch = _motorRpm;
+            motorSound.Play(true);
+            droneRigidbody.angularDrag = angularDragActive;
+
+            _pendingState = DroneStatePiloted;
+
+            if (_isOwner)
+            {
+                if (_isPilot)
+                {
+                    // owner and pilot
+                    SpawnScreenForPlayer(_localPlayer);
+                    fpvCamera.gameObject.SetActive(true);
+                    viewOverrideCamera.gameObject.SetActive(false);
+                    _localPlayer.Immobilize(true);
+
+                    if (!UpdateOwnerPilotRespawnAndOffAndFpv())
+                    {
+                        return;
+                    }
+                }
+                else
+                {
+                    // owner and not pilot
+                }
+            }
+            else
+            {
+                if (_isPilot)
+                {
+                    // pilot but not owner
+                    SpawnScreenForPlayer(_localPlayer);
+                    fpvCamera.gameObject.SetActive(true);
+                    viewOverrideCamera.gameObject.SetActive(false);
+                    _localPlayer.Immobilize(true);
+
+                    if (!UpdateNonOwnerPilotRespawnAndOffAndFpv())
+                    {
+                        return;
+                    }
+                }
+                else
+                {
+                    // not owner and not pilot
+                }
+            }
+        }
+
+        private bool UpdateOwnerPilotRespawnAndOffAndFpv()
+        {
+            if (!UpdateOwnerPilotRespawnAndOff())
+            {
+                return false;
+            }
+
+            SpawnScreenForPlayer(_localPlayer);
+            fpvCamera.gameObject.SetActive(true);
+            viewOverrideCamera.gameObject.SetActive(false);
+
+
+            _toggleFpvPressed = Input.GetKeyDown(_toggleFpvFallback) ||
+                                (!string.IsNullOrEmpty(_toggleFpv)
+                                 && Input.GetButtonDown(_toggleFpv));
+            if (_toggleFpvPressed)
+            {
+                UpdateFPV();
+            }
+
+            return true;
+        }
+
+        private bool UpdateNonOwnerPilotRespawnAndOffAndFpv()
+        {
+            if (!UpdateNonOwnerPilotRespawnAndOff())
+            {
+                return false;
+            }
+
+            _toggleFpvPressed = Input.GetKeyDown(_toggleFpvFallback) ||
+                                (!string.IsNullOrEmpty(_toggleFpv) && Input.GetButtonDown(_toggleFpv));
+            if (_toggleFpvPressed)
+            {
+                UpdateFPV();
+            }
+
+            return true;
+        }
+
+        private void UpdateDroneBooting(float time)
+        {
+            if (time > _bootUpCompletedTime)
+            {
+                _pendingState = DroneStateReady;
+            }
+
+
+            if (_isOwner)
+            {
+                if (_isPilot)
+                {
+                    // owner and pilot
+                    if (!UpdateOwnerPilotRespawnAndOff())
+                    {
+                        return;
+                    }
+                }
+                else
+                {
+                    // owner and not pilot
+                }
+            }
+            else
+            {
+                if (_isPilot)
+                {
+                    // pilot but not owner
+                    if (!UpdateNonOwnerPilotRespawnAndOff())
+                    {
+                        return;
+                    }
+                }
+                else
+                {
+                    // not owner and not pilot
+                }
+            }
+        }
+
+        private void UpdateDroneNotBooted(float time)
+        {
+            StartDroneBoot(time);
+            _pendingState = DroneStateBooting;
+
+            if (_isOwner)
+            {
+                if (_isPilot)
+                {
+                    // owner and pilot
+                    if (!UpdateOwnerPilotRespawnAndOff())
+                    {
+                        return;
+                    }
+                }
+                else
+                {
+                    // owner and not pilot
+                }
+            }
+            else
+            {
+                if (_isPilot)
+                {
+                    // pilot but not owner
+                    if (!UpdateNonOwnerPilotRespawnAndOff())
+                    {
+                        return;
+                    }
+                }
+                else
+                {
+                    // not owner and not pilot
+                }
+            }
+        }
+
+        private bool UpdateNonOwnerPilotRespawnAndOff()
+        {
+            if (!UpdatePilotBasicInput())
+            {
+                return false;
+            }
+
+            var respawnDronePressed = Input.GetKeyDown(_resetFallback)
+                                      || !string.IsNullOrEmpty(_reset) && Input.GetButtonDown(_reset);
+            if (respawnDronePressed)
+            {
+                if (vrcPickup.IsHeld
+                    && vrcPickup.currentHand != VRC_Pickup.PickupHand.None
+                    && vrcPickup.currentPlayer != null)
+                {
+                    if (vrcPickup.DisallowTheft)
+                    {
+                        return false;
+                    }
+
+                    vrcPickup.Drop(_localPlayer);
+                }
+
+                if (TrySpawnDroneInPlayerHand())
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private bool UpdateOwnerPilotRespawnAndOff()
+        {
+            if (!UpdatePilotBasicInput())
+            {
+                return false;
+            }
+
+            var respawnDronePressed = Input.GetKeyDown(_resetFallback)
+                                      || !string.IsNullOrEmpty(_reset) && Input.GetButtonDown(_reset);
+            if (respawnDronePressed && TrySpawnDroneInPlayerHand())
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        private bool UpdatePilotBasicInput()
+        {
+            if (!UpdateInputMethod())
+            {
+                return false;
+            }
+
+            _stopPilotingPressed = Input.GetKeyDown(_exitFallback)
+                                   || !string.IsNullOrEmpty(_exit) && Input.GetButtonDown(_exit);
+
+            if (_stopPilotingPressed)
+            {
+                _pendingState = DroneStateTurningOff;
+                return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// respawns the drone in the player's right hand (if it is empty)
+        /// </summary>
+        /// <returns>true if respawning succeeded</returns>
+        private bool TrySpawnDroneInPlayerHand()
+        {
+            var rightPlayerHandIsEmpty = !_localPlayer.GetPickupInHand(VRC_Pickup.PickupHand.Right);
+            if (rightPlayerHandIsEmpty)
+            {
+                var localPlayerRotation = _localPlayer.GetRotation();
+                transform.SetPositionAndRotation(_localPlayer.GetPosition() +
+                                                 localPlayerRotation * (Vector3.forward + Vector3.up),
+                    localPlayerRotation);
+                droneRigidbody.velocity = Vector3.zero;
+                droneRigidbody.angularVelocity = Vector3.zero;
+                // FIXME once we are allowed in UDON
+                // _localPlayer.SetPickupInHand(vrcPickup, VRC_Pickup.PickupHand.Right);
+                return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// off means not controlled, screens off, pilot can run around etc.
+        /// </summary>
+        /// <param name="time"></param>
+        private void UpdateDroneOff(float time)
+        {
+            if (_isOwner)
+            {
+                if (_isPilot)
+                {
+                    // owner and pilot
+                    UpdatePilotDroneOffState();
+                }
+                else
+                {
+                    // owner and not pilot
+                }
+            }
+            else
+            {
+                if (_isPilot)
+                {
+                    // pilot but not owner
+                    UpdatePilotDroneOffState();
+                }
+                else
+                {
+                    // not owner and not pilot
+                }
+            }
+        }
+
+        private void UpdatePilotDroneOffState()
+        {
+            Assert(_isPilot, "_isPilot in UpdatePilotDroneOffState");
+            if (!UpdateInputMethod())
+            {
+                return;
+            }
+
+            _startPilotingPressed = Input.GetKeyDown(_enterFallback)
+                                    || !string.IsNullOrEmpty(_enter) && Input.GetButtonDown(_enter);
+
+            if (_startPilotingPressed)
+            {
+                _bootUpCompletedTime = 0f;
+                _pendingState = DroneStateNotBooted;
+            }
+        }
+
+        private void UpdateGrabState()
+        {
+            Debug.Assert(vrcPickup, "vrcPickup is valid");
+            if ((int) Time.time % 2 == 0)
+            {
+                _grabbed = vrcPickup && (vrcPickup.IsHeld && vrcPickup.currentPlayer != null);
+            }
+        }
+
+        public string GetDebugText()
+        {
+            return
+                $"Drone {name} state: {_currentState}; is owner: {_isOwner}; is pilot: {_isPilot} ({syncedPilotId}); is VR {_isVr}";
+        }
+
 
         private bool InitAudio()
         {
@@ -354,7 +918,6 @@ namespace Guribo.FPVDrones.Scripts
             }
 
             droneRigidbody.centerOfMass = Vector3.zero;
-            droneRigidbody.angularDrag = GetAngularDrag(syncedDroneState);
             return true;
         }
 
@@ -369,458 +932,43 @@ namespace Guribo.FPVDrones.Scripts
             return angularDragNotActive;
         }
 
-        public void UpdateInput()
+        private void UpdateDroneTurningOff()
         {
-            if (!_initialized)
-            {
-                return;
-            }
-
-            // update the synced state
-            if (vrcPickup && (vrcPickup.IsHeld || vrcPickup.currentPlayer != null))
-            {
-                UpdateLocalState(DroneStateGrabbed);
-            }
-
-            // update manually if network sync events are not firing
-            if (VRCPlayerApi.GetPlayerCount() == 1)
-            {
-                _isPilot = _localPlayerId == syncedPilotId;
-                _isOwner = Networking.IsOwner(gameObject);
-            }
-
-            var time = Time.time;
-
-            if (debugText)
-            {
-                var debugTextText =
-                    $"{transform.parent.gameObject.name}: current state: {_currentState} previous state {_previousState} pilot ID {syncedPilotId} isPilot {_isPilot} is Owner {_isOwner} is VR {_isVr}";
-                debugText.text = debugTextText;
-                Debug.Log(debugTextText);
-            }
-
-
-            switch (_currentState)
-            {
-                case DroneStateOff:
-                {
-                    // switch (_previousState)
-                    // {
-                    //     case DroneStateOff:
-                    //         break;
-                    //     case DroneStateNotBooted:
-                    //         break;
-                    //     case DroneStateBooting:
-                    //         break;
-                    //     case DroneStateReady:
-                    //         break;
-                    //     case DroneStatePiloted:
-                    //         break;
-                    //     case DroneStateCrashed:
-                    //         break;
-                    //     case DroneStateGrabbed:
-                    //         break;
-                    //     default:
-                    //         break;
-                    // }
-
-                    syncedMotorRpm = 0f;
-
-                    if (!_isPilot)
-                    {
-                        return;
-                    }
-
-                    if (!UpdateInputMethod())
-                    {
-                        return;
-                    }
-
-                    if (!_isOwner)
-                    {
-                        return;
-                    }
-
-                    _startPilotingPressed = Input.GetKeyDown(_enterFallback) ||
-                                            (!string.IsNullOrEmpty(_enter)
-                                             && Input.GetButtonDown(_enter));
-
-                    if (_startPilotingPressed)
-                    {
-                        UpdateLocalState(DroneStateNotBooted);
-                        _bootUpCompletedTime = 0f;
-                        _localPlayer.Immobilize(true);
-                        SpawnDroneForPlayer(this, _localPlayer);
-                        SpawnScreenForPlayer(_localPlayer);
-                        screen.gameObject.SetActive(true);
-                    }
-                }
-                    break;
-                case DroneStateNotBooted:
-                {
-                    // switch (_previousState)
-                    // {
-                    //     case DroneStateOff:
-                    //         break;
-                    //     case DroneStateNotBooted:
-                    //         break;
-                    //     case DroneStateBooting:
-                    //         break;
-                    //     case DroneStateReady:
-                    //         break;
-                    //     case DroneStatePiloted:
-                    //         break;
-                    //     case DroneStateCrashed:
-                    //         break;
-                    //     case DroneStateGrabbed:
-                    //         break;
-                    //     default:
-                    //         break;
-                    // }
-
-                    StartDroneBoot(time);
-                    syncedMotorRpm = 0f;
-
-                    if (!_isPilot)
-                    {
-                        return;
-                    }
-
-                    if (!UpdateInputMethod())
-                    {
-                        return;
-                    }
-
-                    if (_isOwner)
-                    {
-                        RespawnDrone();
-
-                        _stopPilotingPressed = Input.GetKeyDown(_exitFallback) ||
-                                               (!string.IsNullOrEmpty(_exit)
-                                                && Input.GetButtonDown(_exit));
-
-                        if (_stopPilotingPressed)
-                        {
-                            StopPiloting();
-                        }
-                    }
-                }
-                    break;
-                case DroneStateBooting:
-                {
-                    switch (_previousState)
-                    {
-                        case DroneStateOff:
-                            StartDroneBoot(time);
-                            break;
-                        case DroneStateNotBooted:
-                            FinishDroneBoot(time);
-                            break;
-                        case DroneStateBooting:
-                            StartDroneBoot(time);
-                            break;
-                        case DroneStateReady:
-                            StartDroneBoot(time);
-                            break;
-                        case DroneStatePiloted:
-                            StartDroneBoot(time);
-                            break;
-                        case DroneStateCrashed:
-                            StartDroneBoot(time);
-                            break;
-                        case DroneStateGrabbed:
-                            StartDroneBoot(time);
-                            break;
-                        default:
-                            StartDroneBoot(time);
-                            break;
-                    }
-
-                    syncedMotorRpm = 0f;
-                    if (!_isPilot)
-                    {
-                        return;
-                    }
-
-                    if (!UpdateInputMethod())
-                    {
-                        return;
-                    }
-
-                    if (_isOwner)
-                    {
-                        RespawnDrone();
-
-                        _stopPilotingPressed = Input.GetKeyDown(_exitFallback) ||
-                                               (!string.IsNullOrEmpty(_exit)
-                                                && Input.GetButtonDown(_exit));
-
-                        if (_stopPilotingPressed)
-                        {
-                            StopPiloting();
-                        }
-                    }
-                }
-                    break;
-                case DroneStateReady:
-                {
-                    syncedMotorRpm = minRpm;
-
-                    // switch (_previousState)
-                    // {
-                    //     case DroneStateOff:
-                    //         break;
-                    //     case DroneStateNotBooted:
-                    //         break;
-                    //     case DroneStateBooting:
-                    //         break;
-                    //     case DroneStateReady:
-                    //         break;
-                    //     case DroneStatePiloted:
-                    //         break;
-                    //     case DroneStateCrashed:
-                    //         break;
-                    //     case DroneStateGrabbed:
-                    //         break;
-                    //     default:
-                    //         break;
-                    // }
-
-                    if (!_isPilot)
-                    {
-                        return;
-                    }
-
-                    if (!UpdateInputMethod())
-                    {
-                        return;
-                    }
-
-                    fpvCamera.gameObject.SetActive(true);
-                    fpvCamera.enabled = true;
-                    viewOverrideCamera.gameObject.SetActive(false);
-                    viewOverrideCamera.enabled = false;
-
-                    UpdateLocalState(DroneStatePiloted);
-
-                    _toggleFpvPressed = Input.GetKeyDown(_toggleFpvFallback) ||
-                                        (!string.IsNullOrEmpty(_toggleFpv)
-                                         && Input.GetButtonDown(_toggleFpv));
-                    if (_toggleFpvPressed)
-                    {
-                        UpdateFPV();
-                    }
-
-                    if (_isOwner)
-                    {
-                        RespawnDrone();
-
-                        _stopPilotingPressed = Input.GetKeyDown(_exitFallback) ||
-                                               (!string.IsNullOrEmpty(_exit)
-                                                && Input.GetButtonDown(_exit));
-                        if (_stopPilotingPressed)
-                        {
-                            StopPiloting();
-                        }
-                    }
-                }
-                    break;
-                case DroneStatePiloted:
-                {
-                    // switch (_previousState)
-                    // {
-                    //     case DroneStateOff:
-                    //         break;
-                    //     case DroneStateNotBooted:
-                    //         break;
-                    //     case DroneStateBooting:
-                    //         break;
-                    //     case DroneStateReady:
-                    //         break;
-                    //     case DroneStatePiloted:
-                    //         break;
-                    //     case DroneStateCrashed:
-                    //         break;
-                    //     case DroneStateGrabbed:
-                    //         break;
-                    //     default:
-                    //         break;
-                    // }
-
-                    if (!_isPilot)
-                    {
-                        return;
-                    }
-
-                    if (!UpdateInputMethod())
-                    {
-                        return;
-                    }
-
-                    _toggleFpvPressed = Input.GetKeyDown(_toggleFpvFallback) ||
-                                        (!string.IsNullOrEmpty(_toggleFpv)
-                                         && Input.GetButtonDown(_toggleFpv));
-                    if (_toggleFpvPressed)
-                    {
-                        UpdateFPV();
-                    }
-
-                    if (_isOwner)
-                    {
-                        RespawnDrone();
-
-                        _stopPilotingPressed = Input.GetKeyDown(_exitFallback) ||
-                                               (!string.IsNullOrEmpty(_exit)
-                                                && Input.GetButtonDown(_exit));
-                        if (_stopPilotingPressed)
-                        {
-                            StopPiloting();
-                        }
-                    }
-                }
-                    break;
-                case DroneStateCrashed:
-                {
-                    syncedMotorRpm = 0;
-
-                    // switch (_previousState)
-                    // {
-                    //     case DroneStateOff:
-                    //         break;
-                    //     case DroneStateNotBooted:
-                    //         break;
-                    //     case DroneStateBooting:
-                    //         break;
-                    //     case DroneStateReady:
-                    //         break;
-                    //     case DroneStatePiloted:
-                    //         break;
-                    //     case DroneStateCrashed:
-                    //         break;
-                    //     case DroneStateGrabbed:
-                    //         break;
-                    //     default:
-                    //         break;
-                    // }
-
-                    if (!_isPilot)
-                    {
-                        return;
-                    }
-
-                    if (!UpdateInputMethod())
-                    {
-                        return;
-                    }
-
-                    _toggleFpvPressed = Input.GetKeyDown(_toggleFpvFallback) ||
-                                        (!string.IsNullOrEmpty(_toggleFpv)
-                                         && Input.GetButtonDown(_toggleFpv));
-                    if (_toggleFpvPressed)
-                    {
-                        UpdateFPV();
-                    }
-
-                    if (_isOwner)
-                    {
-                        RespawnDrone();
-
-                        _stopPilotingPressed = Input.GetKeyDown(_exitFallback) ||
-                                               (!string.IsNullOrEmpty(_exit)
-                                                && Input.GetButtonDown(_exit));
-                        if (_stopPilotingPressed)
-                        {
-                            StopPiloting();
-                        }
-                    }
-                }
-                    break;
-                case DroneStateGrabbed:
-                {
-                    // switch (_previousState)
-                    // {
-                    //     case DroneStateOff:
-                    //         break;
-                    //     case DroneStateNotBooted:
-                    //         break;
-                    //     case DroneStateBooting:
-                    //         break;
-                    //     case DroneStateReady:
-                    //         break;
-                    //     case DroneStatePiloted:
-                    //         break;
-                    //     case DroneStateCrashed:
-                    //         break;
-                    //     case DroneStateGrabbed:
-                    //         break;
-                    //     default:
-                    //         break;
-                    // }
-
-                    if (_isOwner)
-                    {
-                        if (vrcPickup.currentPlayer == null && !vrcPickup.IsHeld)
-                        {
-                            UpdateLocalState(_previousState);
-                        }
-                    }
-
-                    if (!_isPilot)
-                    {
-                        return;
-                    }
-
-                    if (!UpdateInputMethod())
-                    {
-                        return;
-                    }
-
-                    syncedMotorRpm = Mathf.Clamp(
-                        _throttle + (0.5f * (Mathf.Abs(_pitch) + Mathf.Abs(_roll) + Mathf.Abs(_yaw))), minRpm,
-                        1f);
-
-                    _toggleFpvPressed = Input.GetKeyDown(_toggleFpvFallback) ||
-                                        (!string.IsNullOrEmpty(_toggleFpv)
-                                         && Input.GetButtonDown(_toggleFpv));
-                    if (_toggleFpvPressed)
-                    {
-                        UpdateFPV();
-                    }
-                }
-                    break;
-                default:
-                {
-                    Debug.LogError("Unknown drone state");
-                }
-                    break;
-            }
-        }
-
-        private void StopPiloting()
-        {
-            _localPlayer.Immobilize(false);
-            fpvCamera.gameObject.SetActive(false);
-            fpvCamera.enabled = false;
-            viewOverrideCamera.gameObject.SetActive(false);
-            viewOverrideCamera.enabled = false;
-            screen.gameObject.SetActive(false);
-
+            _motorRpm = 0;
             startupSound.Stop();
             motorSound.Stop();
-            UpdateLocalState(DroneStateOff);
-        }
+            _pendingState = DroneStateOff;
+            droneRigidbody.angularDrag = angularDragNotActive;
 
-        private void RespawnDrone()
-        {
-            if (Input.GetKeyDown(_resetFallback) ||
-                (!string.IsNullOrEmpty(_reset)
-                 && Input.GetButtonDown(_reset)))
+            if (_isOwner)
             {
-                SpawnDroneForPlayer(this, _localPlayer);
-                droneRigidbody.velocity = Vector3.zero;
-                droneRigidbody.angularVelocity = Vector3.zero;
-
-                UpdateLocalState(DroneStateReady);
+                if (_isPilot)
+                {
+                    // owner and pilot
+                    _localPlayer.Immobilize(false);
+                    fpvCamera.gameObject.SetActive(false);
+                    viewOverrideCamera.gameObject.SetActive(false);
+                    screen.gameObject.SetActive(false);
+                }
+                else
+                {
+                    // owner and not pilot
+                }
+            }
+            else
+            {
+                if (_isPilot)
+                {
+                    // pilot but not owner
+                    _localPlayer.Immobilize(false);
+                    fpvCamera.gameObject.SetActive(false);
+                    viewOverrideCamera.gameObject.SetActive(false);
+                    screen.gameObject.SetActive(false);
+                }
+                else
+                {
+                    // not owner and not pilot
+                }
             }
         }
 
@@ -863,51 +1011,14 @@ namespace Guribo.FPVDrones.Scripts
             return true;
         }
 
-        private void FinishDroneBoot(float time)
-        {
-            if (time > _bootUpCompletedTime)
-            {
-                UpdateLocalState(DroneStateReady);
-                droneRigidbody.angularDrag = GetAngularDrag(_currentState);
-            }
-        }
-
         private void StartDroneBoot(float time)
         {
             if (!startupSound.IsPlaying())
             {
                 _bootUpCompletedTime = time + startupSound.GetAudioClip().length;
                 startupSound.Play(false);
-
-                UpdateLocalState(DroneStateBooting);
-                droneRigidbody.angularDrag = GetAngularDrag(_currentState);
             }
         }
-
-
-        private void PlayMotorSound(bool play)
-        {
-            return; // TODO ENABLE ONCE AUDIO PERFORMANCE IS FIXED
-            if (play)
-            {
-                _motorSoundProxy.volume = syncedMotorRpm;
-                _motorSoundProxy.pitch = syncedMotorRpm;
-                if (!motorSound.IsPlaying())
-                {
-                    motorSound.Play(true);
-                }
-            }
-            else
-            {
-                if (motorSound.IsPlaying())
-                {
-                    motorSound.Stop();
-                }
-            }
-        }
-
-        private float i;
-
 
         private float Remap(float iMin, float iMax, float oMin, float oMax, float value)
         {
@@ -923,10 +1034,7 @@ namespace Guribo.FPVDrones.Scripts
         {
             var fpvEnabled = fpvCamera.gameObject.activeSelf;
             fpvCamera.gameObject.SetActive(!fpvEnabled);
-            fpvCamera.enabled = !fpvEnabled;
             viewOverrideCamera.gameObject.SetActive(fpvEnabled);
-            viewOverrideCamera.enabled = fpvEnabled;
-
             screen.gameObject.SetActive(!fpvEnabled);
         }
 
@@ -934,16 +1042,41 @@ namespace Guribo.FPVDrones.Scripts
         {
             if (_isPilot)
             {
-                StopPiloting();
+                UpdateDroneTurningOff();
             }
         }
 
-        private void SpawnDroneForPlayer(Drone drone, VRCPlayerApi player)
+        private bool TryRefreshOwnerState()
         {
-            var playerRotation = player.GetRotation();
-            drone.gameObject.transform.SetPositionAndRotation(
-                player.GetPosition() + playerRotation * Vector3.forward, playerRotation);
-            SpawnScreenForPlayer(player);
+            _isOwner = Networking.IsOwner(gameObject);
+            _isPilot = syncedPilotId == _localPlayerId;
+
+            if (!_isOwner)
+            {
+                return false;
+            }
+
+            _owner = _localPlayer;
+            syncedTargetDroneState = _currentState;
+            syncedMotorRpm = _motorRpm;
+            return true;
+        }
+
+
+        private bool TryRefreshRemoteState()
+        {
+            _isOwner = Networking.IsOwner(gameObject);
+            _isPilot = syncedPilotId == _localPlayerId;
+
+            if (_isOwner)
+            {
+                return false;
+            }
+
+            _owner = Networking.GetOwner(gameObject);
+            _motorRpm = syncedMotorRpm;
+            _pendingState = syncedTargetDroneState;
+            return true;
         }
 
         private void SpawnScreenForPlayer(VRCPlayerApi player)
@@ -1124,6 +1257,14 @@ namespace Guribo.FPVDrones.Scripts
             _pitchInputCalibration = droneInput.pitchInputCalibration;
             _rollInputCalibration = droneInput.rollInputCalibration;
             _throttleInputCalibration = droneInput.throttleInputCalibration;
+        }
+
+        private void Assert(bool condition, string message)
+        {
+            if (!condition)
+            {
+                Debug.LogError($"Assertion failed : '{GetType()} : {message}'", this);
+            }
         }
 
         #endregion

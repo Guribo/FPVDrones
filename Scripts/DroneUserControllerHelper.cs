@@ -20,6 +20,9 @@ namespace Guribo.FPVDrones.Scripts
         public UdonBehaviour spatializedAudioPool;
         public UdonBehaviour customDroneInput;
 
+        public string droneInputsName = "droneInputs";
+        public List<UdonBehaviour> droneInputs;
+
         [SerializeField] [HideInInspector] private List<GameObject> instantiatedDrones = new List<GameObject>();
 
         [ContextMenu("Clear Drones")]
@@ -76,7 +79,7 @@ namespace Guribo.FPVDrones.Scripts
 
         private void SetupDrones()
         {
-            
+            var inputs = droneInputs.ToArray();
             foreach (var instantiatedDrone in instantiatedDrones)
             {
                 if (!instantiatedDrone) continue;
@@ -106,6 +109,11 @@ namespace Guribo.FPVDrones.Scripts
                             {
                                 udonBehaviour.SetInspectorVariable(customDroneInputVariableName,
                                     customDroneInput);
+                            }
+
+                            if (udonBehaviour.GetInspectorVariableNames().Contains(droneInputsName))
+                            {
+                                udonBehaviour.SetInspectorVariable(droneInputsName, inputs);
                             }
                         }
                         catch (Exception e)

@@ -3,6 +3,7 @@ using UnityEngine;
 
 namespace Guribo.FPVDrones.Scripts.Editor
 {
+    [CanEditMultipleObjects]
     [CustomEditor(typeof(DroneUserControllerHelper))]
     public class DroneUserControllerHelperEditor : UnityEditor.Editor
     {
