@@ -175,7 +175,6 @@ namespace Guribo.FPVDrones.Scripts
 
         private bool _startPilotingPressed;
         private bool _stopPilotingPressed;
-        private bool _toggleFpvPressed;
 
         #endregion
 
@@ -192,6 +191,10 @@ namespace Guribo.FPVDrones.Scripts
         #region Physics
 
         [Header("Physics")] [SerializeField] private Rigidbody droneRigidbody;
+        [SerializeField] private Transform centerOfGravity;
+
+        [Tooltip("Only works for drones that have no negative thrust, potentially better better performance")]
+        public bool useSingleForce = false;
 
         public float angularDragActive = 20;
         public float angularDragNotActive = 1;
@@ -232,6 +235,7 @@ namespace Guribo.FPVDrones.Scripts
             if (_localPlayer == null)
             {
                 _localPlayerId = -1;
+                Debug.LogWarning("Invalid local player");
                 return false;
             }
 
@@ -256,6 +260,7 @@ namespace Guribo.FPVDrones.Scripts
                 || !motorRearLeft
                 || !motorRearRight)
             {
+                Debug.LogWarning("Invalid motors");
                 return false;
             }
 
@@ -373,14 +378,14 @@ namespace Guribo.FPVDrones.Scripts
             UpdateGrabState();
             UpdateGrabbingForceFeedback(deltaTime);
             UpdateDrone(time);
-            Debug.Log($"Pending state {_pendingState}");
+            // Debug.Log($"Pending state {_pendingState}");
             UpdateLocalState(GetNextState(_currentState, _pendingState));
 
             if (debugText)
             {
                 var debugTextText = GetDebugText();
                 debugText.text = debugTextText;
-                Debug.Log(debugTextText);
+                // Debug.Log(debugTextText);
             }
         }
 
@@ -413,25 +418,46 @@ namespace Guribo.FPVDrones.Scripts
 
             _motorRpm = _throttle;
 
-            var frontLeft = (Mathf.Clamp01(_pitch + _roll + _throttle));
-            var frontRight = (Mathf.Clamp01(_pitch - _roll + _throttle));
-            var backLeft = (Mathf.Clamp01(_roll - _pitch + _throttle));
-            var backRight = (Mathf.Clamp01(_throttle - _pitch - _roll));
-            var forceSum = (frontLeft + frontRight + backLeft + backRight);
 
-            var transformUp = transform.up;
-            if (forceSum > 0.001f)
+            if (useSingleForce)
             {
-                var localForcePosition = (frontLeft / forceSum * _localMotorPositionFl)
-                                         + (frontRight / forceSum * _localMotorPositionFr)
-                                         + (backLeft / forceSum * _localMotorPositionBL)
-                                         + (backRight / forceSum * _localMotorPositionBR);
-                var force = forceSum * maxEngineThrust * transformUp;
-                var position = transform.TransformPoint(localForcePosition);
-                droneRigidbody.AddForceAtPosition(force, position);
-            }
+                var frontLeft = (Mathf.Clamp01(_pitch + _roll + _throttle));
+                var frontRight = (Mathf.Clamp01(_pitch - _roll + _throttle));
+                var backLeft = (Mathf.Clamp01(_roll - _pitch + _throttle));
+                var backRight = (Mathf.Clamp01(_throttle - _pitch - _roll));
+                var forceSum = (frontLeft + frontRight + backLeft + backRight);
 
-            droneRigidbody.AddTorque(transformUp * _yaw);
+                var transformUp = transform.up;
+                if (forceSum > 0.001f)
+                {
+                    var localForcePosition = (frontLeft / forceSum * _localMotorPositionFl)
+                                             + (frontRight / forceSum * _localMotorPositionFr)
+                                             + (backLeft / forceSum * _localMotorPositionBL)
+                                             + (backRight / forceSum * _localMotorPositionBR);
+                    var force = forceSum * maxEngineThrust * transformUp;
+                    var position = transform.TransformPoint(localForcePosition);
+                    droneRigidbody.AddForceAtPosition(force, position, ForceMode.Force);
+                }
+
+                droneRigidbody.AddTorque(transformUp * _yaw);
+            }
+            else
+            {
+                droneRigidbody.AddForceAtPosition(
+                    motorFrontLeft.up * (Mathf.Clamp01(_pitch + _roll + _throttle) * maxEngineThrust),
+                    motorFrontLeft.position);
+                droneRigidbody.AddForceAtPosition(
+                    motorFrontRight.up * (Mathf.Clamp01(_pitch - _roll + _throttle) * maxEngineThrust),
+                    motorFrontRight.position);
+                droneRigidbody.AddForceAtPosition(
+                    motorRearLeft.up * (Mathf.Clamp01(-_pitch + _roll + _throttle) * maxEngineThrust),
+                    motorRearLeft.position);
+                droneRigidbody.AddForceAtPosition(
+                    motorRearRight.up * (Mathf.Clamp01(-_pitch - _roll + _throttle) * maxEngineThrust),
+                    motorRearRight.position);
+
+                droneRigidbody.AddTorque(transform.up * _yaw);
+            }
         }
 
         private bool IsOwnerGrabbing()
@@ -489,6 +515,10 @@ namespace Guribo.FPVDrones.Scripts
         {
             droneRigidbody.angularDrag = angularDragNotActive;
 
+            _motorRpm = 0;
+            _motorSoundProxy.volume = _motorRpm;
+            _motorSoundProxy.pitch = _motorRpm;
+
             if (_isOwner)
             {
                 if (_isPilot)
@@ -519,10 +549,6 @@ namespace Guribo.FPVDrones.Scripts
                     // not owner and not pilot
                 }
             }
-
-            _motorRpm = 0;
-            _motorSoundProxy.volume = _motorRpm;
-            _motorSoundProxy.pitch = _motorRpm;
         }
 
         private void UpdateDronePiloted(float time)
@@ -577,7 +603,7 @@ namespace Guribo.FPVDrones.Scripts
                 if (_isPilot)
                 {
                     // owner and pilot
-                    SpawnScreenForPlayer(_localPlayer);
+                    SpawnScreenForPlayer(_localPlayer, true);
                     fpvCamera.gameObject.SetActive(true);
                     viewOverrideCamera.gameObject.SetActive(false);
                     _localPlayer.Immobilize(true);
@@ -597,7 +623,7 @@ namespace Guribo.FPVDrones.Scripts
                 if (_isPilot)
                 {
                     // pilot but not owner
-                    SpawnScreenForPlayer(_localPlayer);
+                    SpawnScreenForPlayer(_localPlayer, true);
                     fpvCamera.gameObject.SetActive(true);
                     viewOverrideCamera.gameObject.SetActive(false);
                     _localPlayer.Immobilize(true);
@@ -621,17 +647,12 @@ namespace Guribo.FPVDrones.Scripts
                 return false;
             }
 
-            SpawnScreenForPlayer(_localPlayer);
-            fpvCamera.gameObject.SetActive(true);
-            viewOverrideCamera.gameObject.SetActive(false);
-
-
-            _toggleFpvPressed = Input.GetKeyDown(_toggleFpvFallback) ||
-                                (!string.IsNullOrEmpty(_toggleFpv)
-                                 && Input.GetButtonDown(_toggleFpv));
-            if (_toggleFpvPressed)
+            var toggleFpvPressed = Input.GetKeyDown(_toggleFpvFallback) ||
+                                   (!string.IsNullOrEmpty(_toggleFpv)
+                                    && Input.GetButtonDown(_toggleFpv));
+            if (toggleFpvPressed)
             {
-                UpdateFPV();
+                SwitchFpvCamera();
             }
 
             return true;
@@ -644,11 +665,11 @@ namespace Guribo.FPVDrones.Scripts
                 return false;
             }
 
-            _toggleFpvPressed = Input.GetKeyDown(_toggleFpvFallback) ||
-                                (!string.IsNullOrEmpty(_toggleFpv) && Input.GetButtonDown(_toggleFpv));
-            if (_toggleFpvPressed)
+            var toggleFpvPressed = Input.GetKeyDown(_toggleFpvFallback) ||
+                                   (!string.IsNullOrEmpty(_toggleFpv) && Input.GetButtonDown(_toggleFpv));
+            if (toggleFpvPressed)
             {
-                UpdateFPV();
+                SwitchFpvCamera();
             }
 
             return true;
@@ -742,6 +763,7 @@ namespace Guribo.FPVDrones.Scripts
                                       || !string.IsNullOrEmpty(_reset) && Input.GetButtonDown(_reset);
             if (respawnDronePressed)
             {
+                SpawnScreenForPlayer(_localPlayer, false);
                 if (vrcPickup.IsHeld
                     && vrcPickup.currentHand != VRC_Pickup.PickupHand.None
                     && vrcPickup.currentPlayer != null)
@@ -774,6 +796,7 @@ namespace Guribo.FPVDrones.Scripts
                                       || !string.IsNullOrEmpty(_reset) && Input.GetButtonDown(_reset);
             if (respawnDronePressed && TrySpawnDroneInPlayerHand())
             {
+                SpawnScreenForPlayer(_localPlayer, false);
                 return false;
             }
 
@@ -892,6 +915,7 @@ namespace Guribo.FPVDrones.Scripts
         {
             if (!motorSound)
             {
+                Debug.LogWarning("Invalid motorSound");
                 return false;
             }
 
@@ -903,6 +927,7 @@ namespace Guribo.FPVDrones.Scripts
         {
             if (!viewOverrideCamera)
             {
+                Debug.LogWarning("Invalid viewOverrideCamera");
                 return false;
             }
 
@@ -912,12 +937,14 @@ namespace Guribo.FPVDrones.Scripts
 
         private bool InitPhysics()
         {
-            if (!droneRigidbody)
+            if (!(droneRigidbody
+                  && centerOfGravity))
             {
+                Debug.LogWarning("Invalid droneRigidBody/centerOfGravity");
                 return false;
             }
 
-            droneRigidbody.centerOfMass = Vector3.zero;
+            droneRigidbody.centerOfMass = centerOfGravity.localPosition;
             return true;
         }
 
@@ -1030,12 +1057,14 @@ namespace Guribo.FPVDrones.Scripts
         private float Lerp(float a, float b, float t) => (1f - t) * a + t * b;
 
 
-        private void UpdateFPV()
+        private void SwitchFpvCamera()
         {
+            Debug.Log($"{Time.frameCount} : toggle FPV triggered");
+
             var fpvEnabled = fpvCamera.gameObject.activeSelf;
             fpvCamera.gameObject.SetActive(!fpvEnabled);
-            viewOverrideCamera.gameObject.SetActive(fpvEnabled);
             screen.gameObject.SetActive(!fpvEnabled);
+            viewOverrideCamera.gameObject.SetActive(fpvEnabled);
         }
 
         public override void OnSpawn()
@@ -1079,10 +1108,14 @@ namespace Guribo.FPVDrones.Scripts
             return true;
         }
 
-        private void SpawnScreenForPlayer(VRCPlayerApi player)
+        private void SpawnScreenForPlayer(VRCPlayerApi player, bool enableScreen)
         {
             if (!screen) return;
-            screen.gameObject.SetActive(true);
+            if (enableScreen)
+            {
+                screen.gameObject.SetActive(true);
+            }
+
             var playerRotation = player.GetRotation();
             screen.SetPositionAndRotation(
                 player.GetPosition() + playerRotation * Vector3.forward, playerRotation);

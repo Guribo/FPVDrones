@@ -10,11 +10,10 @@ namespace Guribo.FPVDrones.Scripts
     {
         public Rigidbody affectedRigidBody;
 
-        // Helper opbjects to calculate area of lift/drag
 
         // temporary solution for lift/drag coefficients
-        public float lift = 2; // liftmultiplier * density/2
-        public float drag = 0.2f; // dragmultiplier * density/2
+        public float lift = 1f;
+        public float drag = 1f;
 
 
         // e.g. wind (world direction)
@@ -26,11 +25,8 @@ namespace Guribo.FPVDrones.Scripts
         public AnimationCurve liftCurve;
         public AnimationCurve dragCurve;
 
-
         // area of lift/drag
         public float wingArea;
-
-        public bool debug = false;
 
         public bool ownerOnly = false;
 
@@ -45,15 +41,37 @@ namespace Guribo.FPVDrones.Scripts
         public Vector3 currentDragDirection;
         public Vector3 currentVelocity;
 
-        void Start()
+        private VRCPlayerApi _localPlayerApi;
+
+        public void Start()
         {
             // temporary wing area calculation (A = a * b)
 
             _maxRelativeForce = MaxForce * wingArea;
+            _localPlayerApi = Networking.LocalPlayer;
+
+            if (!affectedRigidBody)
+            {
+                affectedRigidBody = FindParentRigidBody(transform, false);
+            }
+
+            Assert(affectedRigidBody, "Rigidbody exists in parents");
+            Assert(liftCurve != null, "liftCurve is valid");
+            Assert(dragCurve != null, "dragCurve is valid");
         }
 
-        void FixedUpdate()
+
+        public void FixedUpdate()
         {
+            if (_localPlayerApi == null
+                || liftCurve == null
+                || dragCurve == null
+                || !affectedRigidBody
+                || affectedRigidBody.IsSleeping())
+            {
+                return;
+            }
+
             var vrcPlayerApi = Networking.LocalPlayer;
             if (vrcPlayerApi != null && ownerOnly && !vrcPlayerApi.IsOwner(gameObject)) return;
 
@@ -94,14 +112,6 @@ namespace Guribo.FPVDrones.Scripts
 
             currentLiftForce = Mathf.Clamp(liftForce, -_maxRelativeForce, _maxRelativeForce);
 
-            if (debug)
-            {
-                Debug.Log("Lift: " + lift + " LiftForce: " + liftForce + "/" + _maxRelativeForce + " WingArea: " +
-                          wingArea + " velocity: " +
-                          currentVelocity.magnitude);
-            }
-
-
             // direction of air resistance
             currentDragDirection = -currentMovementDirection;
 
@@ -118,7 +128,6 @@ namespace Guribo.FPVDrones.Scripts
 
             // Debug.Log($"AOT {Mathf.Sign(dotAngleOfAttack) * angleOfAttack0To90} AOD {angleOfDrag0To90}");
 
-
             // v = a*t
             // <=> v/t = a
             currentDragForce = Mathf.Clamp(resistanceForceMagnitude, -_maxRelativeForce, _maxRelativeForce);
@@ -126,6 +135,55 @@ namespace Guribo.FPVDrones.Scripts
                                                  + currentLiftDirection * currentLiftForce,
                 transformPosition,
                 ForceMode.Force);
+        }
+
+        private void Assert(bool condition, string message)
+        {
+            if (!condition)
+            {
+                Debug.LogError($"Assertion failed : '{GetType()} : {message}'", this);
+            }
+        }
+
+        /// <summary>
+        /// searches in the parents for either the first Rigidbody
+        /// or the last one (the one which is closest to the scene root)
+        /// </summary>
+        /// <param name="start">start transform (inclusive)</param>
+        /// <param name="returnFirstResult">if true returns the first rigidbody that 
+        /// is encountered while moving up the tree</param>
+        /// <returns>the found rigidbody or null if none was found</returns>
+        private Rigidbody FindParentRigidBody(Transform start, bool returnFirstResult)
+        {
+            if (!start)
+            {
+                return null;
+            }
+
+            Rigidbody result = null;
+            for (var next = start; next; next = next.parent)
+            {
+                var rigidbodies = next.GetComponents<Rigidbody>();
+                if (rigidbodies == null || rigidbodies.Length == 0)
+                {
+                    continue;
+                }
+
+                var foundRigidBody = rigidbodies[0];
+                if (!foundRigidBody)
+                {
+                    continue;
+                }
+
+                if (returnFirstResult)
+                {
+                    return foundRigidBody;
+                }
+
+                result = foundRigidBody;
+            }
+
+            return result;
         }
     }
 }

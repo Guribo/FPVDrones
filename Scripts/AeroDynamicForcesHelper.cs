@@ -1,4 +1,4 @@
-#if UNITY_EDITOR
+#if !COMPILER_UDONSHARP && UNITY_EDITOR
 using System;
 using Guribo.UdonUtils.Scripts;
 using UnityEditor;
@@ -47,7 +47,7 @@ namespace Guribo.FPVDrones.Scripts
             Debug.Assert(_aeroDynamicForces, gameObject);
         }
 
-        private void OnValidate()
+        public void Apply()
         {
             liftDragRatioCurve = AnimationCurve.Linear(0, 0, 90f, 0);
 
@@ -66,7 +66,6 @@ namespace Guribo.FPVDrones.Scripts
             try
             {
                 _aeroDynamicForces.SetInspectorVariable(wingAreaName, width * length);
-                _aeroDynamicForces.SetInspectorVariable(affectedRigidBodyName, affectedRigidBody);
                 _aeroDynamicForces.SetInspectorVariable(liftName, lift);
                 _aeroDynamicForces.SetInspectorVariable(dragName, drag);
                 _aeroDynamicForces.SetInspectorVariable(liftCurveName, liftCurve);

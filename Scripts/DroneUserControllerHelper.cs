@@ -1,10 +1,10 @@
-﻿#if UNITY_EDITOR
+﻿#if !COMPILER_UDONSHARP && UNITY_EDITOR
 using System;
 using System.Collections.Generic;
 using Guribo.UdonUtils.Scripts;
 using UnityEditor;
+using UnityEditor.SceneManagement;
 using UnityEngine;
-using UnityEngine.SceneManagement;
 using VRC.Udon;
 
 namespace Guribo.FPVDrones.Scripts
@@ -13,12 +13,15 @@ namespace Guribo.FPVDrones.Scripts
     {
         [SerializeField] protected GameObject dronePrefab;
         public string dronesVariableName = "drones";
+        public string dronesControllerVariableName = "droneControllers";
         public string betterAudioPoolVariableName = "betterAudioPool";
         public string customDroneInputVariableName = "customDroneInput";
         public int maxDrones = 80;
         public UdonBehaviour droneUserController;
         public UdonBehaviour spatializedAudioPool;
         public UdonBehaviour customDroneInput;
+
+        public bool spawnAsPrefab;
 
         public string droneInputsName = "droneInputs";
         public List<UdonBehaviour> droneInputs;
@@ -37,6 +40,9 @@ namespace Guribo.FPVDrones.Scripts
             }
 
             instantiatedDrones.Clear();
+            EditorSceneManager.MarkSceneDirty(gameObject.scene);
+            EditorUtility.SetDirty(this.gameObject);
+            EditorUtility.SetDirty(this);
         }
 
         [ContextMenu("Regenerate Drones")]
@@ -50,31 +56,41 @@ namespace Guribo.FPVDrones.Scripts
 
             ClearDrones();
 
-
             for (var i = 0; i < maxDrones; i++)
             {
-                var connectedPrefabInstance =
-                    PrefabUtility.InstantiatePrefab(dronePrefab, SceneManager.GetActiveScene());
-                if (!connectedPrefabInstance)
+                GameObject drone = null;
+                if (spawnAsPrefab)
+                {
+                    var droneInstance = PrefabUtility.InstantiatePrefab(dronePrefab);
+                    if (!droneInstance)
+                    {
+                        Debug.LogError("Failed to create connected prefab of the drone");
+                        return;
+                    }
+
+                    drone = (GameObject) droneInstance;
+                }
+                else
+                {
+                    drone = Instantiate(dronePrefab);
+                }
+
+                if (!drone)
                 {
                     Debug.LogError("Failed to create connected prefab of the drone");
                     return;
                 }
 
-                var instantiate = (GameObject) connectedPrefabInstance;
-                if (!instantiate)
-                {
-                    DestroyImmediate(connectedPrefabInstance);
-                    return;
-                }
-
-                instantiate.name = $"GENERATED_{instantiate.name}_{i}";
-                instantiatedDrones.Add(instantiate);
+                drone.name = $"GENERATED_{drone.name}_{i}";
+                instantiatedDrones.Add(drone);
             }
 
 
             droneUserController.SetInspectorVariable(dronesVariableName, instantiatedDrones.ToArray());
             SetupDrones();
+            EditorSceneManager.MarkSceneDirty(gameObject.scene);
+            EditorUtility.SetDirty(this.gameObject);
+            EditorUtility.SetDirty(this);
         }
 
         private void SetupDrones()
