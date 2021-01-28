@@ -26,6 +26,10 @@ namespace Guribo.FPVDrones.Scripts
         private const int DroneStatePiloted = 5;
         private const int DroneStateCrashed = 6;
 
+        public bool autoLevel = true;
+        private bool _autoHover;
+        private bool _autoPositionHold;
+
         private float _motorRpm;
         private bool _initialized;
         private bool _grabbed;
@@ -420,13 +424,18 @@ namespace Guribo.FPVDrones.Scripts
         public Vector3 pidPitch;
         public Vector3 pidYaw;
         public Vector3 pidRoll;
+
+        public Vector3 pidPitchAutoLevel;
+        public Vector3 pidRollAutoLevel;
+
         public Vector3 previousIntegral;
         public Vector3 previousError;
 
         public Vector3 rotationSpeed = new Vector3(360f, 360f, 360f);
+        public Vector3 stabilizedAngles = new Vector3(45f, 45f, 45f);
 
         private int _lastFrameCount;
-        private Vector3 _rotationTargetSpeeds;
+        private Vector3 _droneTargets;
 
         private void UpdateGrabbingForceFeedback(float deltaTime)
         {
@@ -447,41 +456,104 @@ namespace Guribo.FPVDrones.Scripts
                 return;
             }
 
-            var currentFrameCount = Time.frameCount;
-            if (_lastFrameCount != currentFrameCount)
+            var droneTransform = transform;
+            if (autoLevel)
             {
-                _lastFrameCount = currentFrameCount;
-                _rotationTargetSpeeds = new Vector3(GetPitch() * -rotationSpeed.x,
-                    GetYaw() * rotationSpeed.y,
-                    GetRoll() * -rotationSpeed.z) * Mathf.Deg2Rad;
-                _throttle = GetThrottle();
-                _motorRpm = Mathf.Clamp(_throttle + 0.333f * (Mathf.Abs(_yaw)
-                                                              + Mathf.Abs(_pitch)
-                                                              + Mathf.Abs(_roll)), minRpm, 1f);
+                var forward = droneTransform.forward;
+                var up = droneTransform.up;
+
+                var forwardProjected = Vector3.ProjectOnPlane(forward, Vector3.up).normalized;
+                var rightProjected = Vector3.Cross(forwardProjected, Vector3.up).normalized;
+
+                var pitchDelta = Vector3.ProjectOnPlane(up, rightProjected).normalized;
+                var rollDelta = Vector3.ProjectOnPlane(up, forwardProjected).normalized;
+
+                var pitchSign = Mathf.Sign(Vector3.Dot(pitchDelta, forwardProjected));
+                var rollSign = Mathf.Sign(Vector3.Dot(rollDelta, rightProjected));
+
+                var pitch = pitchSign * Vector3.Angle(Vector3.up, pitchDelta);
+                var roll = rollSign * Vector3.Angle(Vector3.up, rollDelta);
+
+                var currentFrameCount = Time.frameCount;
+                if (_lastFrameCount != currentFrameCount)
+                {
+                    _lastFrameCount = currentFrameCount;
+                    _droneTargets = new Vector3(GetPitch() * -stabilizedAngles.x,
+                        GetYaw() * rotationSpeed.y * Mathf.Deg2Rad,
+                        GetRoll() * -stabilizedAngles.z);
+                    _throttle = GetThrottle();
+                    _motorRpm = Mathf.Clamp(_throttle + 0.333f * (Mathf.Abs(_yaw)
+                                                                  + Mathf.Abs(_pitch)
+                                                                  + Mathf.Abs(_roll)), minRpm, 1f);
+
+                    if (previousIntegral.sqrMagnitude > 1f)
+                    {
+                        previousIntegral = previousIntegral.normalized;
+                    }
+                }
+
+                if (!_isOwner) return;
+
+                var angularVelocity = droneTransform.InverseTransformVector(droneRigidbody.angularVelocity);
+                var fixedDeltaTime = Time.fixedDeltaTime;
+
+                var pitchPid = PidUpdate(pidPitchAutoLevel, previousIntegral.x, previousError.x, pitch,
+                    _droneTargets.x,
+                    fixedDeltaTime);
+                var yawPid = PidUpdate(pidYaw, previousIntegral.y, previousError.y, angularVelocity.y,
+                    _droneTargets.y,
+                    fixedDeltaTime);
+                var rollPid = PidUpdate(pidRollAutoLevel, previousIntegral.z, previousError.z, roll,
+                    _droneTargets.z,
+                    fixedDeltaTime);
+
+                previousIntegral = new Vector3(pitchPid.y, yawPid.y, rollPid.y);
+                previousError = new Vector3(pitchPid.z, yawPid.z, rollPid.z);
+
+
+                _yaw = Mathf.Clamp(yawPid.x, -1f, 1f);
+                _pitch = Mathf.Clamp(pitchPid.x, -1f, 1f);
+                _roll = Mathf.Clamp(rollPid.x, -1f, 1f);
+            }
+            else
+            {
+                var currentFrameCount = Time.frameCount;
+                if (_lastFrameCount != currentFrameCount)
+                {
+                    _lastFrameCount = currentFrameCount;
+                    _droneTargets = new Vector3(GetPitch() * -rotationSpeed.x,
+                        GetYaw() * rotationSpeed.y,
+                        GetRoll() * -rotationSpeed.z) * Mathf.Deg2Rad;
+                    _throttle = GetThrottle();
+                    _motorRpm = Mathf.Clamp(_throttle + 0.333f * (Mathf.Abs(_yaw)
+                                                                  + Mathf.Abs(_pitch)
+                                                                  + Mathf.Abs(_roll)), minRpm, 1f);
+                }
+
+                if (!_isOwner) return;
+
+
+                var angularVelocity = droneTransform.InverseTransformVector(droneRigidbody.angularVelocity);
+                var fixedDeltaTime = Time.fixedDeltaTime;
+                var pitchPid = PidUpdate(pidPitch, previousIntegral.x, previousError.x, angularVelocity.x,
+                    _droneTargets.x,
+                    fixedDeltaTime);
+                var yawPid = PidUpdate(pidYaw, previousIntegral.y, previousError.y, angularVelocity.y,
+                    _droneTargets.y,
+                    fixedDeltaTime);
+                var rollPid = PidUpdate(pidRoll, previousIntegral.z, previousError.z, angularVelocity.z,
+                    _droneTargets.z,
+                    fixedDeltaTime);
+
+                previousIntegral = new Vector3(pitchPid.y, yawPid.y, rollPid.y);
+                previousError = new Vector3(pitchPid.z, yawPid.z, rollPid.z);
+
+
+                _yaw = Mathf.Clamp(yawPid.x, -1f, 1f);
+                _pitch = Mathf.Clamp(pitchPid.x, -1f, 1f);
+                _roll = Mathf.Clamp(rollPid.x, -1f, 1f);
             }
 
-            if (!_isOwner) return;
-
-
-            var angularVelocity = transform.InverseTransformVector(droneRigidbody.angularVelocity);
-            var fixedDeltaTime = Time.fixedDeltaTime;
-            var pitchPid = PidUpdate(pidPitch, previousIntegral.x, previousError.x, angularVelocity.x,
-                _rotationTargetSpeeds.x,
-                fixedDeltaTime);
-            var yawPid = PidUpdate(pidYaw, previousIntegral.y, previousError.y, angularVelocity.y,
-                _rotationTargetSpeeds.y,
-                fixedDeltaTime);
-            var rollPid = PidUpdate(pidRoll, previousIntegral.z, previousError.z, angularVelocity.z,
-                _rotationTargetSpeeds.z,
-                fixedDeltaTime);
-
-            previousIntegral = new Vector3(pitchPid.y, yawPid.y, rollPid.y);
-            previousError = new Vector3(pitchPid.z, yawPid.z, rollPid.z);
-
-
-            _yaw = Mathf.Clamp(yawPid.x, -1f, 1f);
-            _pitch = Mathf.Clamp(pitchPid.x, -1f, 1f);
-            _roll = Mathf.Clamp(rollPid.x, -1f, 1f);
 
             if (useSingleForce)
             {
@@ -491,7 +563,7 @@ namespace Guribo.FPVDrones.Scripts
                 var backRight = (Mathf.Clamp01(_throttle - _pitch - _roll));
                 var forceSum = (frontLeft + frontRight + backLeft + backRight);
 
-                var transformUp = transform.up;
+                var transformUp = droneTransform.up;
                 if (forceSum > 0.001f)
                 {
                     var localForcePosition = (frontLeft / forceSum * _localMotorPositionFl)
@@ -499,7 +571,7 @@ namespace Guribo.FPVDrones.Scripts
                                              + (backLeft / forceSum * _localMotorPositionBL)
                                              + (backRight / forceSum * _localMotorPositionBR);
                     var force = forceSum * maxEngineThrust * transformUp;
-                    var position = transform.TransformPoint(localForcePosition);
+                    var position = droneTransform.TransformPoint(localForcePosition);
                     droneRigidbody.AddForceAtPosition(force, position, ForceMode.Force);
                 }
 
@@ -528,7 +600,7 @@ namespace Guribo.FPVDrones.Scripts
                         motorRearRight.up * (Mathf.Clamp01(-_pitch - _roll + _throttle) * maxEngineThrust),
                         motorRearRight.position);
 
-                    droneRigidbody.AddTorque(transform.up * _yaw);
+                    droneRigidbody.AddTorque(droneTransform.up * _yaw);
                 }
             }
         }
@@ -668,6 +740,7 @@ namespace Guribo.FPVDrones.Scripts
             _motorSoundProxy.pitch = _motorRpm;
             motorSound.Play(true);
             droneRigidbody.angularDrag = angularDragActive;
+            previousIntegral = Vector3.zero;
 
             _pendingState = DroneStatePiloted;
 
@@ -1160,8 +1233,18 @@ namespace Guribo.FPVDrones.Scripts
                 return false;
             }
 
+            var pilot = VRCPlayerApi.GetPlayerById(syncedPilotId);
+            if (pilot == null)
+            {
+                syncedPilotId = noPilot;
+                syncedTargetDroneState = DroneStateOff;
+            }
+            else
+            {
+                syncedTargetDroneState = _currentState;
+            }
+
             _owner = _localPlayer;
-            syncedTargetDroneState = _currentState;
             syncedMotorRpm = _motorRpm;
             return true;
         }
