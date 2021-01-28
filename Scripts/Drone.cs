@@ -13,6 +13,7 @@ namespace Guribo.FPVDrones.Scripts
     {
         public Text debugText;
 
+
         #region DroneState
 
         [HideInInspector] public int noPilot = -1;
@@ -184,7 +185,7 @@ namespace Guribo.FPVDrones.Scripts
         [SerializeField] private BetterAudioSource motorSound;
         private AudioSource _motorSoundProxy;
 
-        public float minRpm = 0.2f;
+        public float minRpm = 0.1f;
 
         #endregion
 
@@ -364,6 +365,31 @@ namespace Guribo.FPVDrones.Scripts
             PilotControlDrone();
         }
 
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="pid"></param>
+        /// <param name="previousIntegral"></param>
+        /// <param name="previousError"></param>
+        /// <param name="currentValue"></param>
+        /// <param name="targetValue"></param>
+        /// <param name="deltaTime"></param>
+        /// <returns>result, integral, currentError</returns>
+        private Vector3 PidUpdate(Vector3 pid, float previousIntegral, float previousError, float currentValue,
+            float targetValue, float deltaTime)
+        {
+            var currentError = targetValue - currentValue;
+
+            var proportional = pid.x * currentError;
+            var integral = previousIntegral + deltaTime * pid.y * currentError;
+            var derivative = pid.z * (currentError - previousError) / deltaTime;
+
+            var result = proportional + integral + derivative;
+
+            return new Vector3(result, integral, currentError);
+        }
+
         public void Update()
         {
             if (!_initialized)
@@ -391,6 +417,17 @@ namespace Guribo.FPVDrones.Scripts
 
         #endregion
 
+        public Vector3 pidPitch;
+        public Vector3 pidYaw;
+        public Vector3 pidRoll;
+        public Vector3 previousIntegral;
+        public Vector3 previousError;
+
+        public Vector3 rotationSpeed = new Vector3(360f, 360f, 360f);
+
+        private int _lastFrameCount;
+        private Vector3 _rotationTargetSpeeds;
+
         private void UpdateGrabbingForceFeedback(float deltaTime)
         {
             if (IsOwnerGrabbing())
@@ -398,26 +435,53 @@ namespace Guribo.FPVDrones.Scripts
                 _localPlayer.PlayHapticEventInHand(vrcPickup.currentHand,
                     deltaTime,
                     _motorRpm,
-                    _motorRpm * 10f);
+                    _motorRpm * 100f);
             }
         }
 
         private void PilotControlDrone()
         {
-            if (!(_isOwner
-                  && _isPilot
+            if (!(_isPilot
                   && IsInState(DroneStatePiloted)))
             {
                 return;
             }
 
-            _yaw = GetYaw();
-            _pitch = GetPitch();
-            _roll = GetRoll();
-            _throttle = GetThrottle();
+            var currentFrameCount = Time.frameCount;
+            if (_lastFrameCount != currentFrameCount)
+            {
+                _lastFrameCount = currentFrameCount;
+                _rotationTargetSpeeds = new Vector3(GetPitch() * -rotationSpeed.x,
+                    GetYaw() * rotationSpeed.y,
+                    GetRoll() * -rotationSpeed.z) * Mathf.Deg2Rad;
+                _throttle = GetThrottle();
+                _motorRpm = Mathf.Clamp(_throttle + 0.333f * (Mathf.Abs(_yaw)
+                                                              + Mathf.Abs(_pitch)
+                                                              + Mathf.Abs(_roll)), minRpm, 1f);
+            }
 
-            _motorRpm = _throttle;
+            if (!_isOwner) return;
 
+
+            var angularVelocity = transform.InverseTransformVector(droneRigidbody.angularVelocity);
+            var fixedDeltaTime = Time.fixedDeltaTime;
+            var pitchPid = PidUpdate(pidPitch, previousIntegral.x, previousError.x, angularVelocity.x,
+                _rotationTargetSpeeds.x,
+                fixedDeltaTime);
+            var yawPid = PidUpdate(pidYaw, previousIntegral.y, previousError.y, angularVelocity.y,
+                _rotationTargetSpeeds.y,
+                fixedDeltaTime);
+            var rollPid = PidUpdate(pidRoll, previousIntegral.z, previousError.z, angularVelocity.z,
+                _rotationTargetSpeeds.z,
+                fixedDeltaTime);
+
+            previousIntegral = new Vector3(pitchPid.y, yawPid.y, rollPid.y);
+            previousError = new Vector3(pitchPid.z, yawPid.z, rollPid.z);
+
+
+            _yaw = Mathf.Clamp(yawPid.x, -1f, 1f);
+            _pitch = Mathf.Clamp(pitchPid.x, -1f, 1f);
+            _roll = Mathf.Clamp(rollPid.x, -1f, 1f);
 
             if (useSingleForce)
             {
@@ -439,24 +503,33 @@ namespace Guribo.FPVDrones.Scripts
                     droneRigidbody.AddForceAtPosition(force, position, ForceMode.Force);
                 }
 
-                droneRigidbody.AddTorque(transformUp * _yaw);
+                if (_yaw * _yaw > 0.001f)
+                {
+                    droneRigidbody.AddTorque(transformUp * _yaw);
+                }
             }
             else
             {
-                droneRigidbody.AddForceAtPosition(
-                    motorFrontLeft.up * (Mathf.Clamp01(_pitch + _roll + _throttle) * maxEngineThrust),
-                    motorFrontLeft.position);
-                droneRigidbody.AddForceAtPosition(
-                    motorFrontRight.up * (Mathf.Clamp01(_pitch - _roll + _throttle) * maxEngineThrust),
-                    motorFrontRight.position);
-                droneRigidbody.AddForceAtPosition(
-                    motorRearLeft.up * (Mathf.Clamp01(-_pitch + _roll + _throttle) * maxEngineThrust),
-                    motorRearLeft.position);
-                droneRigidbody.AddForceAtPosition(
-                    motorRearRight.up * (Mathf.Clamp01(-_pitch - _roll + _throttle) * maxEngineThrust),
-                    motorRearRight.position);
+                if (_pitch * _pitch > 0.001f
+                    || _roll * _roll > 0.001f
+                    || _throttle * _throttle > 0.001f
+                    || _yaw * _yaw > 0.001f)
+                {
+                    droneRigidbody.AddForceAtPosition(
+                        motorFrontLeft.up * (Mathf.Clamp01(_pitch + _roll + _throttle) * maxEngineThrust),
+                        motorFrontLeft.position);
+                    droneRigidbody.AddForceAtPosition(
+                        motorFrontRight.up * (Mathf.Clamp01(_pitch - _roll + _throttle) * maxEngineThrust),
+                        motorFrontRight.position);
+                    droneRigidbody.AddForceAtPosition(
+                        motorRearLeft.up * (Mathf.Clamp01(-_pitch + _roll + _throttle) * maxEngineThrust),
+                        motorRearLeft.position);
+                    droneRigidbody.AddForceAtPosition(
+                        motorRearRight.up * (Mathf.Clamp01(-_pitch - _roll + _throttle) * maxEngineThrust),
+                        motorRearRight.position);
 
-                droneRigidbody.AddTorque(transform.up * _yaw);
+                    droneRigidbody.AddTorque(transform.up * _yaw);
+                }
             }
         }
 
@@ -585,7 +658,7 @@ namespace Guribo.FPVDrones.Scripts
             }
 
             _motorSoundProxy.volume = _motorRpm;
-            _motorSoundProxy.pitch = _motorRpm;
+            _motorSoundProxy.pitch = 0.5f * (_motorRpm + 1f);
         }
 
         private void UpdateDroneReady(float time)
@@ -932,6 +1005,8 @@ namespace Guribo.FPVDrones.Scripts
             }
 
             viewOverrideCamera.stereoTargetEye = _isVr ? StereoTargetEyeMask.Both : StereoTargetEyeMask.None;
+            viewOverrideCamera.enabled = true;
+            fpvCamera.enabled = true;
             return true;
         }
 
@@ -1013,7 +1088,7 @@ namespace Guribo.FPVDrones.Scripts
             if (droneInputs == null
                 || vrcInputMethod >= droneInputs.Length)
             {
-                Debug.LogError("No input");
+                // Debug.LogError("No input");
                 return false;
             }
 
