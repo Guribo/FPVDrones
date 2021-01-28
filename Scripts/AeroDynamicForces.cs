@@ -28,7 +28,7 @@ namespace Guribo.FPVDrones.Scripts
         // area of lift/drag
         public float wingArea;
 
-        public bool ownerOnly = false;
+        public bool ownerOnly = true;
 
         private const float MaxForce = 100000;
 
@@ -72,16 +72,16 @@ namespace Guribo.FPVDrones.Scripts
                 return;
             }
 
-            var vrcPlayerApi = Networking.LocalPlayer;
-            if (vrcPlayerApi != null && ownerOnly && !vrcPlayerApi.IsOwner(gameObject)) return;
+            if (ownerOnly && !_localPlayerApi.IsOwner(gameObject)) return;
 
 
             var transformPosition = transform.position;
             // current Velocity in World space + wind/turbulences
             currentVelocity = affectedRigidBody.GetPointVelocity(transformPosition) + additionalVelocity;
             var currVelSqrMagnitude = currentVelocity.sqrMagnitude;
-            if (currVelSqrMagnitude < 0.0001f)
+            if (currVelSqrMagnitude < 0.001f)
             {
+                
                 return;
             }
 
@@ -118,13 +118,13 @@ namespace Guribo.FPVDrones.Scripts
             // Wing air resistance
             var angleOfDrag0To90 = 90f - angleOfAttack0To90;
             // cw: temporary resistance Coefficient from angle of attack
-            float resistanceCoefficient = dragCurve.Evaluate(angleOfDrag0To90);
+            var resistanceCoefficient = dragCurve.Evaluate(angleOfDrag0To90);
 
             // cw * density / 2 * v² * A (drag = multiplier * density/2)
-            float resistanceForceMagnitude = resistanceCoefficient *
-                                             (drag * additionalDragFactor)
-                                             * currVelSqrMagnitude *
-                                             wingArea;
+            var resistanceForceMagnitude = resistanceCoefficient *
+                                           (drag * additionalDragFactor)
+                                           * currVelSqrMagnitude *
+                                           wingArea;
 
             // Debug.Log($"AOT {Mathf.Sign(dotAngleOfAttack) * angleOfAttack0To90} AOD {angleOfDrag0To90}");
 

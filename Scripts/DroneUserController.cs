@@ -43,7 +43,7 @@ namespace Guribo.FPVDrones.Scripts
             }
 
             _initialized = true;
-            Debug.Log("DroneUerController initialized successfully");
+            // DBG Debug.Log("DroneUerController initialized successfully");
         }
 
         public void Update()
@@ -178,48 +178,51 @@ namespace Guribo.FPVDrones.Scripts
             }
 
             var droneOwner = Networking.GetOwner(drone.gameObject);
+
+
             if (TryHandleDroneHasNoOwner(droneOwner, drone))
             {
-                Debug.Log("Master: No drone owner found");
+                // DBG Debug.Log("Master: No drone owner found");
                 return;
             }
 
             if (TryHandleOwnerIsPilot(droneOwner, drone))
             {
-                Debug.Log("Master: owning player is also pilot");
+                // DBG Debug.Log("Master: owning player is also pilot");
                 return;
             }
 
             if (TryHandleMasterOwnsDrone(droneOwner, drone))
             {
+                TryLimitingToOnePilotPerDrone(droneOwner, drone);
                 return;
             }
 
-            Debug.Log($"Master: did not find a new pilot for drone {_updateIndex}");
+            // DBG Debug.Log($"Master: did not find a new pilot for drone {_updateIndex}");
 
             if (TryHandleDronePickedUp(drone))
             {
-                Debug.Log($"Master: drone {_updateIndex} is grabbed by non-pilot user");
+                // DBG Debug.Log($"Master: drone {_updateIndex} is grabbed by non-pilot user");
                 return;
             }
 
-            Debug.Log($"Master: drone {_updateIndex} is not grabbed by non-pilot user");
+            // DBG Debug.Log($"Master: drone {_updateIndex} is not grabbed by non-pilot user");
 
             // once dropped return it to the pilot or master
             if (TryReturningControlToPilot(droneOwner, drone))
             {
-                Debug.Log($"Master: returned drone {_updateIndex} control to pilot {droneOwner.playerId}");
+                // DBG Debug.Log($"Master: returned drone {_updateIndex} control to pilot {droneOwner.playerId}");
                 return;
             }
 
-            Debug.Log($"Master: didn't return drone {_updateIndex} control to pilot {droneOwner.playerId}");
+            // DBG Debug.Log($"Master: didn't return drone {_updateIndex} control to pilot {droneOwner.playerId}");
 
             if (TryLimitingToOnePilotPerDrone(droneOwner, drone))
             {
                 return;
             }
 
-            Debug.Log($"Master: didn't need remove drone {_updateIndex} from players");
+            // DBG Debug.Log($"Master: didn't need remove drone {_updateIndex} from players");
         }
 
         private bool TryLimitingToOnePilotPerDrone(VRCPlayerApi droneOwner, Drone drone)
@@ -237,7 +240,7 @@ namespace Guribo.FPVDrones.Scripts
             if (droneOwnerShipCount > 1)
             {
                 // make the master (this user) the owner
-                Debug.Log($"Master: remove drone {_updateIndex} from owner {droneOwnerPlayerId}");
+                // DBG Debug.Log($"Master: remove drone {_updateIndex} from owner {droneOwnerPlayerId}");
                 Networking.SetOwner(_localPlayer, drone.gameObject);
                 drone.syncedPilotId = NoPilot;
                 dronePilots[_updateIndex] = NoPilot;
@@ -247,7 +250,7 @@ namespace Guribo.FPVDrones.Scripts
 
             if (droneOwnerShipCount == 0)
             {
-                Debug.Log($"Master: giving free drone {_updateIndex} to owner {droneOwnerPlayerId}");
+                // DBG Debug.Log($"Master: giving free drone {_updateIndex} to owner {droneOwnerPlayerId}");
                 // make the current owner the pilot
                 dronePilots[_updateIndex] = droneOwnerPlayerId;
                 Networking.SetOwner(droneOwner, drone.gameObject);
@@ -300,13 +303,7 @@ namespace Guribo.FPVDrones.Scripts
         {
             var ownerIsPilot = droneOwner.playerId == dronePilots[_updateIndex]
                                && droneOwner.playerId == drone.syncedPilotId;
-            if (ownerIsPilot)
-            {
-                // nothing to do
-                return true;
-            }
-
-            return false;
+            return ownerIsPilot;
         }
 
         private bool TryHandleMasterOwnsDrone(VRCPlayerApi droneOwner, Drone drone)
@@ -314,32 +311,32 @@ namespace Guribo.FPVDrones.Scripts
             var masterOwnsDrone = droneOwner.playerId == _localPlayerId;
             if (!masterOwnsDrone)
             {
-                Debug.Log($"Master: does not own drone {_updateIndex}");
+                // DBG Debug.Log($"Master: does not own drone {_updateIndex}");
                 return false;
             }
 
-            Debug.Log($"Master: owns drone {_updateIndex}");
+            // DBG Debug.Log($"Master: owns drone {_updateIndex}");
 
             if (TryHandleMasterControlsNoDrone(drone))
             {
-                Debug.Log($"Master: started controlling drone {_updateIndex}");
+                // DBG Debug.Log($"Master: started controlling drone {_updateIndex}");
                 return true;
             }
 
-            Debug.Log($"Master: does already control a drone");
+            // DBG Debug.Log($"Master: does already control a drone");
 
             var isMasterControlled = _masterDrone == drone;
             if (isMasterControlled)
             {
-                Debug.Log($"Master: still controls drone {_updateIndex}");
+                // DBG Debug.Log($"Master: still controls drone {_updateIndex}");
                 drone.syncedPilotId = _localPlayerId;
                 return true;
             }
 
-            Debug.Log($"Master: does not control drone {_updateIndex}");
+            // DBG Debug.Log($"Master: does not control drone {_updateIndex}");
             if (HandleDroneAvailable(drone))
             {
-                Debug.Log($"Master: found a new pilot {dronePilots[_updateIndex]} for drone {_updateIndex}");
+                // DBG Debug.Log($"Master: found a new pilot {dronePilots[_updateIndex]} for drone {_updateIndex}");
                 return true;
             }
 
@@ -361,7 +358,7 @@ namespace Guribo.FPVDrones.Scripts
                 var player = _players[i];
                 if (player == null)
                 {
-                    Debug.Log($"Master: invalid player at position {i}");
+                    // DBG Debug.Log($"Master: invalid player at position {i}");
                     continue;
                 }
 
@@ -369,14 +366,13 @@ namespace Guribo.FPVDrones.Scripts
                 var isPilot = PlayerIsPilot(playerId);
                 if (isPilot)
                 {
-                    Debug.Log($"Master: player {playerId} is already pilot");
+                    // DBG Debug.Log($"Master: player {playerId} is already pilot");
                     // keep searching while the players are pilots
                     continue;
                 }
 
-                Debug.Log($"Master: Giving player {playerId} the drone {_updateIndex}");
+                // DBG Debug.Log($"Master: Giving player {playerId} the drone {_updateIndex}");
                 // player found that is not a pilot, give the player the drone
-                Networking.SetOwner(player, drone.gameObject);
                 drone.syncedPilotId = playerId;
                 dronePilots[_updateIndex] = playerId;
                 _nextUpdateTime += ownerTransitionWaitDuration;
@@ -435,7 +431,7 @@ namespace Guribo.FPVDrones.Scripts
                 return null;
             }
 
-            Debug.Log($"Master checking drone {_updateIndex}");
+            // DBG Debug.Log($"Master checking drone {_updateIndex}");
 
             return droneControllers[_updateIndex];
         }

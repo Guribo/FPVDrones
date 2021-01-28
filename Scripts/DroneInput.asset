@@ -48,7 +48,7 @@ MonoBehaviour:
       Data: 
     - Name: $k
       Entry: 1
-      Data: enter
+      Data: exit
     - Name: $v
       Entry: 7
       Data: 2|UdonSharp.Compiler.FieldDefinition, UdonSharp.Editor
@@ -75,10 +75,10 @@ MonoBehaviour:
       Data: SystemString
     - Name: symbolOriginalName
       Entry: 1
-      Data: enter
+      Data: exit
     - Name: symbolUniqueName
       Entry: 1
-      Data: enter
+      Data: exit
     - Name: symbolDefaultValue
       Entry: 6
       Data: 
@@ -111,7 +111,7 @@ MonoBehaviour:
       Data: 
     - Name: $k
       Entry: 1
-      Data: exit
+      Data: enter
     - Name: $v
       Entry: 7
       Data: 6|UdonSharp.Compiler.FieldDefinition, UdonSharp.Editor
@@ -132,10 +132,10 @@ MonoBehaviour:
       Data: SystemString
     - Name: symbolOriginalName
       Entry: 1
-      Data: exit
+      Data: enter
     - Name: symbolUniqueName
       Entry: 1
-      Data: exit
+      Data: enter
     - Name: symbolDefaultValue
       Entry: 6
       Data: 

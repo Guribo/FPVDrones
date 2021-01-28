@@ -6,8 +6,8 @@ namespace Guribo.FPVDrones.Scripts
 {
     public class DroneInput : UdonSharpBehaviour
     {
-        public string enter = "Oculus_CrossPlatform_Button4";
-        public string exit = "Oculus_CrossPlatform_Button2";
+        public string exit = "Oculus_CrossPlatform_Button4";
+        public string enter = "Oculus_CrossPlatform_Button2";
         public string reset = "Oculus_CrossPlatform_PrimaryThumbstick";
         public string toggleFpv = "Oculus_CrossPlatform_SecondaryThumbstick";
 
